@@ -5,6 +5,7 @@
 from math import sin, cos, tan, atan, degrees, radians, pi, sqrt, atan2, asin, ceil
 from graphserver.core import Graph, Street
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
+from numpy import zeros
 
 # based on OpenLayers.Util.distVincenty=function(p1, p2)
 def angular_dist(dist_meters, at_lat) :
@@ -75,7 +76,7 @@ def geoid_dist(lat1, lon1, lat2, lon2) :
     return s
     
     
-def create_grid ( this, gtfsdb, grid_spacing=100, overhang=1000, link_radius=1000, obstruction=1.4 ) :
+def create_grid ( this, gtfsdb, grid_spacing=100, overhang=2000, link_radius=500, obstruction=1.4, link_grid = True ) :
     """Makes a regular grid of points over a geographic space. Adds them as nodes to this Graph, and optionally links them to stations and to one another. 
 <grid_spacing> is in meters. 
 <overhang> is how far to go beyond the GTFS stations' extent in meters.
@@ -88,7 +89,7 @@ Grid cells are on average 4.5 cm too wide and 3.7 cm too short, giving an area o
     
     # get extent of stations in GTFS - lon and lat are reversed in result compared to other functions, this should be changed
     min_lon, min_lat, max_lon, max_lat = gtfsdb.extent()
-    print min_lat, min_lon, max_lat, max_lon
+    # print min_lat, min_lon, max_lat, max_lon
     # move bounding box out by <overhang> meters
     delta_lat, delta_lon = angular_dist(overhang, max_lat)
     max_lat += delta_lat
@@ -96,7 +97,7 @@ Grid cells are on average 4.5 cm too wide and 3.7 cm too short, giving an area o
     delta_lat, delta_lon = angular_dist(overhang, min_lat)
     min_lat -= delta_lat
     min_lon -= delta_lon
-    print min_lat, min_lon, max_lat, max_lon
+    # print min_lat, min_lon, max_lat, max_lon
 
     # get grid dimensions at latitude where it is widest
     # works only in northern hemisphere for the moment
@@ -105,8 +106,10 @@ Grid cells are on average 4.5 cm too wide and 3.7 cm too short, giving an area o
     rows = int( ceil( (max_lat - min_lat) / delta_lat ) )
        
     # iterate up latitudes creating grid points
-    result = [ [ None for c in range(cols) ] for r in range(rows) ]
+    grid = zeros( (rows, cols, 2) )
+    point_list = []
     curr_lat = min_lat
+    print "Creating grid points and linking to stations within %d meters..." % link_radius
     for row in range(rows) :
         if row % 50 == 0 : print "row %i / %i" % (row, rows)
         delta_lat, delta_lon = angular_dist(grid_spacing, curr_lat)
@@ -122,19 +125,22 @@ Grid cells are on average 4.5 cm too wide and 3.7 cm too short, giving an area o
                     this.add_edge( grid_label, stop_label, Street("walk", dd) )
                     this.add_edge( stop_label, grid_label, Street("walk", dd) )
                     # print "%s to %s onstructed dist %f" % (grid_label, stop_label, dd)
-            result[row][col] = (curr_lat, curr_lon, v)
+                    point_list.append( (row, col, v) )
+            grid[row][col] = (curr_lat, curr_lon)
             curr_lon += delta_lon
         curr_lat += delta_lat
-    print "Linking grid internally..."
-    for row in range(1, rows-1) :
-        if row % 50 == 0 : print "row %i / %i" % (row, rows)
-        for col in range(1, cols-1):
+    if link_grid :
+        print "Linking grid internally..."
+        for row, col, v in point_list :
             v_label = 'grid-%s-%s' % (row, col)
             for row2, col2 in [(row-1, col-1), (row-1, col+1), (row+1, col-1), (row+1, col+1)] :
                 v_label2 = 'grid-%s-%s' % (row2, col2)
-                this.add_edge( v_label, v_label2, Street("walk", grid_spacing * 2) )
-            
-    return result
+                try :
+                    this.add_edge( v_label, v_label2, Street("walk", grid_spacing * 2) )
+                except :
+                    # I shall fail on mesh edges
+                    pass                
+    return grid, point_list
     
 
         

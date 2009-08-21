@@ -1,15 +1,13 @@
 import processing.opengl.*;
-
-// unlekkerLib - Marius Watz, workshop.evolutionzone.com 
-//
-// Example using a 2-dimensional array of 3D vectors to calculate
-// a mesh.
-
 import unlekker.util.*;
 import unlekker.geom.*;
 import unlekker.data.*;
 import processing.video.*;
 import hypermedia.net.*;   // UDP
+import java.nio.ByteBuffer;
+
+static final int MODE_SURFACE = 0, MODE_POINTS = 1, MODE_LINES = 2;
+int displayMode = MODE_POINTS;
 
 MovieMaker mm;
 boolean recording = false;
@@ -17,6 +15,7 @@ boolean recording = false;
 UDP udp;
 String mesg;
 float  mesgVal;
+
 
 // 2-dimensional array of 3D vector objects to contain our mesh
 Vec3 mesh[][];
@@ -68,7 +67,7 @@ void setup() {
 
   rotX=30;
   rotY=45;
-  amplitude=100;
+  amplitude=1;
   xTrans =  width  / 2;
   yTrans =  height / 2;
   zTrans = -width  / 2;
@@ -82,28 +81,57 @@ void setup() {
   textFont(loadFont("pixel.vlw"));
 }
 
-void receive( byte[] data, String ip, int port ) {
-  int row;
-  int col;
-
-  if (data[0] == 'T') {
-    for (int i=1; i < data.length; i+=3) {
-      row = data[i];
-      col = data[i+1];
-      if (row >= 100 || col >= 100) continue;
-      // java supports only signed chars
-      ttimes[row][col] += (int)(data[i+2] & 0xFF);
+void receive( byte[] data, String ip, int port ) throws IOException {
+  // be careful of byte order
+  // Java always reads in network, python will send in machine unless you specify in struct.pack
+  // ByteBuffers and DataInputStreams are good for unpacking data
+  int row, col, t;
+  float x, y, z;
+  byte b;
+  ByteBuffer bb = ByteBuffer.wrap(data);
+  // InputStream in = new ByteArrayInputStream(data);
+  // DataInputStream din = new DataInputStream(in);
+  b = bb.get();
+  // Receive travel times at gridpoints
+  if (b == (byte)'T') {
+    while (bb.hasRemaining()) {
+      row = bb.get() & 0xFF;
+      col = bb.get() & 0xFF;
+      t = (int) (bb.get() & 0xFF);
+      if (row < 100 && col < 100) ttimes[row][col] += t;
+      // java supports only signed chars      
       // ttimes[row][col] = 255;
       // targetMesh[row][col].y = (int)(data[i+2] & 0xFF) / 255.0;
     }
-  } else if (data[0] == 'P') {
-    for (int i=1; i < data.length; i+=5) {
-      row = data[i];
-      col = data[i+1];
-      if (row >= 100 || col >= 100) continue;
-      targetMesh[row][col].x = (data[i+2] & 0xFF) - 127;
-      targetMesh[row][col].z = (data[i+3] & 0xFF) - 127;
-      targetMesh[row][col].y = (data[i+4] & 0xFF) - 127;
+  // Receive new coordinates for gridpoints
+  } else if (b == (byte)'P') {
+    while (bb.hasRemaining()) {
+      row = bb.get() & 0xFF;
+      col = bb.get() & 0xFF;
+      x = bb.getFloat();
+      y = bb.getFloat();
+      z = bb.getFloat();
+      if (row < 100 && col < 100) {
+        targetMesh[row][col].x = x;
+        targetMesh[row][col].z = y;
+        targetMesh[row][col].y = z;
+      }
+      // targetMesh[row][col].x = (data[i+2] & 0xFF) - 127;
+      // targetMesh[row][col].z = (data[i+3] & 0xFF) - 127;
+      // targetMesh[row][col].y = (data[i+4] & 0xFF) - 127;
+    }
+  // Receive 3d scatterplot irrespective of grid
+  } else if (b == (byte)'S') {
+    while (bb.hasRemaining()) {
+      t = bb.getInt(); // point number
+      x = bb.getFloat();
+      y = bb.getFloat();
+      z = bb.getFloat();
+      row = t / num;  // assign up to n^2 points to independent gridpoints
+      col = t % num;  // 
+      targetMesh[row][col].x = x;
+      targetMesh[row][col].z = y;
+      targetMesh[row][col].y = z;
     }
   }
 }
@@ -115,6 +143,7 @@ void draw() {
   if(doSTL) beginRaw("unlekker.data.STL","UnlekkerMesh"+frameCount+".stl");
 
   // perspective();
+  // ortho();
   // if you do lights before translate, they will move with the point of view
   // better illuminates paths
   // lights();
@@ -149,8 +178,19 @@ void draw() {
       mesh[i][j].add(path);
     }
   }  
-  drawMesh();
-
+  if (displayMode == MODE_SURFACE) drawMesh();
+  else {
+    for (int i=0; i<num-1; i++) {
+      for (int j=0; j<num; j++) {
+        int t = ttimes[i][j];
+        stroke(100+t, 155+t, 100+t);
+        if (displayMode == MODE_POINTS) point(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z);
+        // else line(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z, mesh[i+1][j].x, mesh[i+1][j].y * amplitude, mesh[i+1][j].z);
+        else if (mesh[i][j].y != 0) line(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z, 0, 0, 0);
+      }
+    }  
+  }
+  
   if (recording) mm.addFrame();  
   
   if(doSTL || doPDF) {
@@ -167,14 +207,15 @@ void keyPressed() {
   if      (key=='1') meshPlane(targetMesh);
   else if (key=='2') meshNoise(targetMesh);
   else if (key=='3') meshSineWave(targetMesh);
-
-  if(key=='s') doSTL=true;
-
+  else if (key=='S') doSTL=true;
   // toggle texture mapping
-  if(key=='m') texMap = ! texMap;
-  
+  else if (key=='m') texMap = ! texMap;
+  // select surface, point, or line display
+  else if (key=='s') displayMode = MODE_SURFACE ;
+  else if (key=='p') displayMode = MODE_POINTS ;
+  else if (key=='l') displayMode = MODE_LINES ;
   // toggle recording
-  if(key=='r') {
+  else if(key=='r') {
     if (recording) {
       recording = false;
       mm.finish();
@@ -183,12 +224,10 @@ void keyPressed() {
       recording = true;
     }
   }
-  
   // fake incoming SPT results to test
-  if(key=='f') fakeTravelTimes();
-  
+  else if(key=='f') fakeTravelTimes();
   // check for ALT key
-  if (key == CODED && keyCode==ALT) modDown=true;
+  else if (key == CODED && keyCode==ALT) modDown=true;
 }
 
 void keyReleased() {
@@ -211,7 +250,7 @@ void mouseDragged() {
     // for right clicks, change the amplitude
     } else if (mouseButton == RIGHT) {
       // y axis adjusts amplitude of graph 
-      amplitude += (mouseY-pmouseY) * 0.5; // ((float)mouseY/(float)height)*height;
+      amplitude += (mouseY-pmouseY) * 0.005; // ((float)mouseY/(float)height)*height;
       // x axis adjusts coloration
       mesgVal = mouseX / (float)width * 255;
     }
@@ -242,33 +281,32 @@ void drawMesh() {
       // using alpha on the object only cuts off a few fps
       // fill(100, z, mesgVal, sqrt(i/float(num)) * 255);  
       // fill(200, 255, 200);  
-
       y = mesh[j][i].y * amplitude;
       // fade to black in same direction as light falls for more drama
       if (texMap) {
-        fade = 32 + (ttimes[j][i] * 2);
+        fade = 32 + (ttimes[i][j] * 2);
         fill(fade, fade, fade) ;  
         // extra coords specify corresponding point in the texture image
-        vertex(mesh[j][i].x, y, mesh[j][i].z, j/float(num), i/float(num));
+        vertex(i, y, j, i/float(num), j/float(num));
       } else {
         fade = float(i) / float(num);
-        fade += (ttimes[j][i]) / 255.0 * 3;
+        fade += (ttimes[i][j]) / 255.0 * 3;
         fill(100 * fade, y * fade, mesgVal * fade);  
-        vertex(mesh[j][i].x, y, mesh[j][i].z);
+        vertex(i, y, j);
       }
       
       y = mesh[j][i+1].y * amplitude;
       // fade to black in same direction as light falls for more drama
       if (texMap) {
-        fade = 32 + (ttimes[j][i+1] * 2);
+        fade = 32 + (ttimes[i+1][j] * 2);
         fill(fade, fade, fade);  
         // extra coords specify corresponding point in the texture image
-        vertex(mesh[j][i+1].x, y, mesh[j][i+1].z, j/float(num), (i+1)/float(num));
+        vertex(i+1, y, j, (i+1)/float(num), j/float(num));
       } else {
         fade = float(i+1) / float(num);
-        fade += (ttimes[j][i+1]) / 255.0 * 3;
+        fade += (ttimes[i+1][j]) / 255.0 * 3;
         fill(100 * fade, y * fade, mesgVal * fade);  
-        vertex(mesh[j][i+1].x, y, mesh[j][i+1].z);
+        vertex(i+1, y, j);
       }
 
 //      y = mesh[j][i+1].y * amplitude;
