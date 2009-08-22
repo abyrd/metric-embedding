@@ -131,6 +131,7 @@ Grid cells are on average 4.5 cm too wide and 3.7 cm too short, giving an area o
         curr_lat += delta_lat
     if link_grid :
         print "Linking grid internally..."
+        # try linking only to neighbourhood?
         for row, col, v in point_list :
             v_label = 'grid-%s-%s' % (row, col)
             for row2, col2 in [(row-1, col-1), (row-1, col+1), (row+1, col-1), (row+1, col+1)] :

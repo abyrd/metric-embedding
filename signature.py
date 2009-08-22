@@ -108,6 +108,14 @@ def visu_pos_b(coords) :
         cnum += 1
     transmit(result)
 
+# split a sequence seq into m roughly equal pieces
+def splitFloor(seq, m):
+    n,b,newseq = len(seq),0,[]
+    for k in range(m):
+        a, b = b, b + (n+k)//m
+        newseq.append(seq[a:b])
+    return newseq
+
     
 gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
 gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
@@ -116,7 +124,7 @@ gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
 g = gdb.incarnate()
 # doubling radius from 500 to 1000 meters roughly doubles path search time and quadruples number of points in use
 # setting radius to 100 works quickly on small set to test convergence and set parameters
-grid, point_list = geotools.create_grid( g, gtfsdb, link_radius = 500)
+grid, point_list = geotools.create_grid( g, gtfsdb, link_radius = 100)
 
 # point_list = [(286, 163)] # chosen to be close to a bart station
 print "Number of interesting grid points :", len(point_list)
@@ -125,38 +133,40 @@ print "Number of interesting grid points :", len(point_list)
 coords = random.random((len(point_list), 4)) # * 200
 # initialize first two dimensions to planar coords
 # to shuffle at every iteration, coords and velocities must be shuffled identically to point list
-shuffle(point_list)
-for i in range(len(point_list)) :
-    coords[i][0] = point_list[i][0]
-    coords[i][1] = point_list[i][1]
-print "Coordinates initialized."
-
-# points start with zero velocity
-vels = zeros(coords.shape)
+#shuffle(point_list)
+#for i in range(len(point_list)) :
+#    coords[i][0] = point_list[i][0]
+#    coords[i][1] = point_list[i][1]
+#print "Coordinates initialized."
 
 # fix travel times in order to test array copy time
 # tt = ones(len(point_list)) * 100
 
 t0 = 1253820000
 udp = socket( AF_INET, SOCK_DGRAM )
-TIMESTEP = 1.0
-PASSES = 10
+TIMESTEP = 0.7  # 0.7
 # 0.5 seems to converge best (10 passes), 0.3 about the same 
-NORMALIZE_FACTOR = 0.5/len(point_list)
+# NORMALIZE_FACTOR = 1.0/len(point_list) # 0.5/len(point_list)
 n_pass  = 0
+vels = zeros( coords.shape )
 while (1) :
     pass_err = 0
+    pass_err_max = 0
     # shuffle(point_list)
     t_start = time.time()
     n_iter = 0
-    accels = zeros(coords.shape) 
-    # what if velocities are nullified every cycle, i.e. vels = accels? YES! converges.
+    # what if velocities are nullified every cycle, i.e. vels = accels? YES! converges. explanation: these are instantaneous figures?
+    forces   = zeros( coords.shape )
+    error_to = zeros( len(point_list) )
+    times_to = zeros( len(point_list) )
     for o in range(len(point_list)) :
+        # could be factored into the loop but more confusing
+        # this does not cancel the influence exactly, but a window of the same size
         # point = point_list.pop()
         point = point_list[o][0:2]
         tt = zeros(len(point_list))
         get_times(g, grid, point, t0) # call graphserver
-        # this copy operation takes 38 percent of the time
+        # this copy operation takes 20 to 40 percent of the time
         # it should be eliminated
         for i in range(len(point_list)) : 
             tt[i] = point_list[i][2].payload.time - t0
@@ -175,11 +185,12 @@ while (1) :
         # print "Stress relative to current point is : %f / %f / %f" % (stress, stress_rms, stress_b)
         # when norms fall to zero, division gives NaN
         # use nan_to_num() or myarr[np.isnan(myarr)] = 0
-        uvectors = vectors  /  norms[:,newaxis]  # divide every 3vector element-wise by norms duplicated into direction 2
-        accels  += nan_to_num(uvectors * adjust[:,newaxis]) * NORMALIZE_FACTOR  # same strategy. filter out NaNs before using.
+        uvectors = vectors / norms[:,newaxis]   # divide every 3vector element-wise by norms duplicated into axis 1
+        damping  = (vels - vels[o]) * TIMESTEP  # suggested by Ingram (2007) in fact, does this just cancel out all previous accelerations?
+        forces  += nan_to_num(uvectors * adjust[:,newaxis]) - damping  # filter out NaNs (from perfectly reproduced distances, which give null vectors)
         # should this also be done after each full pass?
         # vels += accels  # instantaneous acceleration vectors added to existing velocities
-        # vels[point] -= accels.sum(axis=0).sum(axis=0)  # they should also push back collectively on the origin point 
+        forces[o] -= forces.sum(axis=0)  # they should also push back collectively on the origin point 
         # update pos here or after a full pass? after a pass looks much more stable and predictable.
         # coords  += vels * TIMESTEP  # timestep * velocity applied to move points
         # visu_pos(coords)
@@ -192,24 +203,36 @@ while (1) :
         # to avoid ambiguity, you have to explicitly create a new axis to show which way to broadcast.
         # broadcasting just means implicit, space-saving copy by reference into the inexistent 
         # indices of another dimension.
+        
+        # Accumulate elements of the Kruskal stress to evaluate later
+        error_to += adjust ** 2
+        times_to += tt ** 2
         pass_err += sum(abs(adjust))
+        pass_err_max = max(pass_err_max, max(abs(adjust)))
         n_iter += 1
-        if n_iter % 50 == 0 : 
+        if n_iter % 10 == 0 : 
             print "%i%% (%i iterations averaging %f seconds)" % (n_iter * 100 / len(point_list), n_iter, (time.time() - t_start) / n_iter)
         #    stress = sqrt(sum(adjust**2) / sum(norms**2) )
         #    print "Stress relative to current point is : %f" % (stress)
     # update positions here or during loop? here seems better
+    # This is called normalization in Ingram (2007). Another way of saying this is that points implicitly have a mass equal to their number.
+    accels = forces / len(point_list)
+    vels   += accels * TIMESTEP  # Euler integration
+    coords += vels   * TIMESTEP  # Euler integration
     n_pass += 1
-    vels = accels  * TIMESTEP  # instantaneous acceleration vectors added to existing velocities
     pass_err = pass_err / float(len(point_list) ** 2)
     k_energy = sum( sqrt( (vels**2).sum(axis=1) ) )
     avg_k_energy = k_energy / len(point_list)
+    # stress^2 = summed squares of all errors / summed squares of all distances.
     print "Average absolute error %i." % pass_err
+    print "Maximum error in this pass %i." % pass_err_max
     print "Kinetic energy total %i average %i." % (k_energy, avg_k_energy)
-    if avg_k_energy < 20 :
-        break
-    coords  += vels * TIMESTEP  # timestep * velocity applied to move points
-    visu_pos_b(coords)
+    print "Stress for trips to each cell:"
+    print sqrt(error_to / times_to)
+    print "Total stress for this pass:", sqrt( sum(error_to) / sum(times_to) )
+    # if avg_k_energy < 20 :
+    #    break
+    # visu_pos_b(coords)
     print "End of pass number %i." % n_pass
     
 for c in coords:
