@@ -117,10 +117,11 @@ def splitFloor(seq, m):
     return newseq
 
     
-gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
-gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
-#gtfsdb = GTFSDatabase  ( '../gsdata/trimet_13sep2009.gtfsdb' )
-#gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.linked.gsdb' )
+#gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
+#gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
+gtfsdb = GTFSDatabase  ( '../gsdata/trimet_13sep2009.gtfsdb' )
+#gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.nolink.gsdb' )
+gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.hpm.linked.gsdb' )
 g = gdb.incarnate()
 # doubling radius from 500 to 1000 meters roughly doubles path search time and quadruples number of points in use
 # setting radius to 100 works quickly on small set to test convergence and set parameters
@@ -130,23 +131,26 @@ grid, point_list = geotools.create_grid( g, gtfsdb, link_radius = 100)
 print "Number of interesting grid points :", len(point_list)
             
 # initialize coords to random
-coords = random.random((len(point_list), 4)) # * 200
+coords = random.random((len(point_list), 4)) 
 # initialize first two dimensions to planar coords
 # to shuffle at every iteration, coords and velocities must be shuffled identically to point list
 #shuffle(point_list)
-#for i in range(len(point_list)) :
-#    coords[i][0] = point_list[i][0]
-#    coords[i][1] = point_list[i][1]
-#print "Coordinates initialized."
+v  = 35.0   # km per hour
+v *= 1000   # m per hour
+v /= 3600   # meters per second
+t  = 1 / v  # seconds per meter
+t *= 100    # seconds per 100 m
+for i in range(len(point_list)) :
+    coords[i][0] = point_list[i][0] * t
+    coords[i][1] = point_list[i][1] * t
+print "Coordinates initialized."
 
 # fix travel times in order to test array copy time
 # tt = ones(len(point_list)) * 100
 
 t0 = 1253820000
 udp = socket( AF_INET, SOCK_DGRAM )
-TIMESTEP = 0.7  # 0.7
-# 0.5 seems to converge best (10 passes), 0.3 about the same 
-# NORMALIZE_FACTOR = 1.0/len(point_list) # 0.5/len(point_list)
+TIMESTEP = 0.7  
 n_pass  = 0
 vels = zeros( coords.shape )
 while (1) :
@@ -169,7 +173,10 @@ while (1) :
         # this copy operation takes 20 to 40 percent of the time
         # it should be eliminated
         for i in range(len(point_list)) : 
-            tt[i] = point_list[i][2].payload.time - t0
+            if point_list[i][2].payload is not None :  # this should not be necessary on a connected graph 
+                tt[i] = point_list[i][2].payload.time - t0
+            else :
+                tt[i] = 99999
         # visu_times(tt)
         # cplot(tt)
         # print "Performing signature algorithm..."
@@ -186,8 +193,7 @@ while (1) :
         # when norms fall to zero, division gives NaN
         # use nan_to_num() or myarr[np.isnan(myarr)] = 0
         uvectors = vectors / norms[:,newaxis]   # divide every 3vector element-wise by norms duplicated into axis 1
-        damping  = (vels - vels[o]) * TIMESTEP  # suggested by Ingram (2007) in fact, does this just cancel out all previous accelerations?
-        forces  += nan_to_num(uvectors * adjust[:,newaxis]) - damping  # filter out NaNs (from perfectly reproduced distances, which give null vectors)
+        forces  += nan_to_num(uvectors * adjust[:,newaxis])   # filter out NaNs (from perfectly reproduced distances, which give null vectors)
         # should this also be done after each full pass?
         # vels += accels  # instantaneous acceleration vectors added to existing velocities
         forces[o] -= forces.sum(axis=0)  # they should also push back collectively on the origin point 
@@ -216,8 +222,8 @@ while (1) :
         #    print "Stress relative to current point is : %f" % (stress)
     # update positions here or during loop? here seems better
     # This is called normalization in Ingram (2007). Another way of saying this is that points implicitly have a mass equal to their number.
-    accels = forces / len(point_list)
-    vels   += accels * TIMESTEP  # Euler integration
+    accels  = forces / len(point_list)
+    vels    = accels * TIMESTEP  # Euler integration. Should be += but we consider that damping effectively cancels out all previous accelerations.
     coords += vels   * TIMESTEP  # Euler integration
     n_pass += 1
     pass_err = pass_err / float(len(point_list) ** 2)

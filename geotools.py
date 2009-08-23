@@ -3,9 +3,10 @@
 #  
 
 from math import sin, cos, tan, atan, degrees, radians, pi, sqrt, atan2, asin, ceil
-from graphserver.core import Graph, Street
+from graphserver.core import Graph, Street, State
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
-from numpy import zeros
+from numpy import zeros, inf
+import sys
 
 # based on OpenLayers.Util.distVincenty=function(p1, p2)
 def angular_dist(dist_meters, at_lat) :
@@ -75,6 +76,28 @@ def geoid_dist(lat1, lon1, lat2, lon2) :
     
     return s
     
+def od_matrix( this, t0, direction=1, reporter = sys.stdout ) :
+    station_vertices = [v for v in this.vertices if v.label[0:4] == 'sta-']
+    station_labels   = [v.label for v in station_vertices]
+    n_stations = len(station_vertices)
+    matrix     = zeros( (n_stations, n_stations), dtype=float )
+    for origin_idx in range(n_stations) :
+        if reporter : 
+            reporter.write( "\rProcessing %i / %i ..." % (origin_idx, n_stations) )
+            reporter.flush()
+        # would be nice to use vertex pointers instead of labels. could be done with one function - lookup in python if necessary.
+        origin_label = station_labels[origin_idx]
+        this.spt_in_place(origin_label, None, State(1, t0))
+        for dest_idx in range(n_stations) :
+            dest_vertex = station_vertices[dest_idx]
+            # first board time should be subtracted here
+            if dest_vertex.payload is None :
+                delta_t = inf
+            else :
+                delta_t = dest_vertex.payload.time - t0
+            matrix[origin_idx, dest_idx] = delta_t
+    return ( station_labels, matrix )
+    
     
 def create_grid ( this, gtfsdb, grid_spacing=100, overhang=2000, link_radius=500, obstruction=1.4, link_grid = True ) :
     """Makes a regular grid of points over a geographic space. Adds them as nodes to this Graph, and optionally links them to stations and to one another. 
@@ -120,27 +143,29 @@ Grid cells are on average 4.5 cm too wide and 3.7 cm too short, giving an area o
             v = this.add_vertex( grid_label )
             for stop_id, stop_name, stop_lat, stop_lon in gtfsdb.nearby_stops( curr_lat, curr_lon, link_radius / obstruction ) :
                 dd = obstruction * geoid_dist( curr_lat, curr_lon, stop_lat, stop_lon )
-                if dd < link_radius :
-                    stop_label = "sta-%s" % stop_id
-                    this.add_edge( grid_label, stop_label, Street("walk", dd) )
-                    this.add_edge( stop_label, grid_label, Street("walk", dd) )
-                    # print "%s to %s onstructed dist %f" % (grid_label, stop_label, dd)
+                if dd < link_radius * obstruction :
                     point_list.append( (row, col, v) )
+                    if dd < grid_spacing * obstruction : 
+                        stop_label = "sta-%s" % stop_id
+                        this.add_edge( grid_label, stop_label, Street("walk", dd) )
+                        this.add_edge( stop_label, grid_label, Street("walk", dd) )
+                        # print "%s to %s onstructed dist %f" % (grid_label, stop_label, dd)
+                    
             grid[row][col] = (curr_lat, curr_lon)
             curr_lon += delta_lon
         curr_lat += delta_lat
     if link_grid :
         print "Linking grid internally..."
-        # try linking only to neighbourhood?
+        # linking only to neighbourhood
         for row, col, v in point_list :
-            v_label = 'grid-%s-%s' % (row, col)
-            for row2, col2 in [(row-1, col-1), (row-1, col+1), (row+1, col-1), (row+1, col+1)] :
-                v_label2 = 'grid-%s-%s' % (row2, col2)
-                try :
-                    this.add_edge( v_label, v_label2, Street("walk", grid_spacing * 2) )
-                except :
-                    # I shall fail on mesh edges
-                    pass                
+                v_label = 'grid-%s-%s' % (row, col)
+                for row2, col2 in [(row-1, col-1), (row-1, col+1), (row+1, col-1), (row+1, col+1)] :
+                    v_label2 = 'grid-%s-%s' % (row2, col2)
+                    try :
+                        this.add_edge( v_label, v_label2, Street("walk", grid_spacing) )
+                    except :
+                        # I shall fail on mesh edges
+                        pass                
     return grid, point_list
     
 
