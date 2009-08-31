@@ -23,11 +23,11 @@ def cplot(Z) :
     clabel(CS, inline=1, fmt='%d', fontsize=14)
     show()
 
-#gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
-#gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
-gtfsdb = GTFSDatabase  ( '../gsdata/trimet_13sep2009.gtfsdb' )
+gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
+gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
+#gtfsdb = GTFSDatabase  ( '../gsdata/trimet_13sep2009.gtfsdb' )
 #gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.nolink.gsdb' )
-gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.hpm.linked.gsdb' )
+#gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.hpm.linked.gsdb' )
 g = gdb.incarnate()
 
 t0 = 1253800000
@@ -38,7 +38,7 @@ n_stations = len(station_labels)
 min_lon, min_lat, max_lon, max_lat = gtfsdb.extent()
 proj = pyproj.Proj( proj='sinu', ellps='WGS84' )
 geod = pyproj.Geod( ellps='WGS84' )
-min_lon, min_lat, arc_dist = geod.fwd(min_lon, min_lat, 180+45, 1000)
+min_lon, min_lat, arc_dist = geod.fwd(min_lon, min_lat, 180+45, 5000)
 min_x,   min_y   = proj( min_lon, min_lat )
 proj = pyproj.Proj( proj='sinu', ellps='WGS84', lon_0=min_lon, y_0=-min_y, m=0.1 )
 
