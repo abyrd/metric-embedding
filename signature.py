@@ -117,11 +117,11 @@ def splitFloor(seq, m):
     return newseq
 
     
-#gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
-#gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
-gtfsdb = GTFSDatabase  ( '../gsdata/trimet_13sep2009.gtfsdb' )
+gtfsdb = GTFSDatabase  ( '../gsdata/bart.gtfsdb' )
+gdb    = GraphDatabase ( '../gsdata/bart.linked.gsdb' )
+#gtfsdb = GTFSDatabase  ( '../gsdata/trimet_13sep2009.gtfsdb' )
 #gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.nolink.gsdb' )
-gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.hpm.linked.gsdb' )
+#gdb    = GraphDatabase ( '../gsdata/trimet_13sep2009.hpm.linked.gsdb' )
 g = gdb.incarnate()
 # doubling radius from 500 to 1000 meters roughly doubles path search time and quadruples number of points in use
 # setting radius to 100 works quickly on small set to test convergence and set parameters
@@ -238,7 +238,7 @@ while (1) :
     print "Total stress for this pass:", sqrt( sum(error_to) / sum(times_to) )
     # if avg_k_energy < 20 :
     #    break
-    # visu_pos_b(coords)
+    visu_pos_b(coords)
     print "End of pass number %i." % n_pass
     
 for c in coords:

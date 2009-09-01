@@ -184,7 +184,8 @@ void draw() {
       for (int j=0; j<num; j++) {
         int t = ttimes[i][j];
         stroke(100+t, 155+t, 100+t);
-        if (displayMode == MODE_POINTS) point(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z);
+        // if (displayMode == MODE_POINTS) point(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z);
+        if (displayMode == MODE_POINTS && mesh[i][j].y != 0) point(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z);
         // else line(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z, mesh[i+1][j].x, mesh[i+1][j].y * amplitude, mesh[i+1][j].z);
         else if (mesh[i][j].y != 0) line(mesh[i][j].x, mesh[i][j].y * amplitude, mesh[i][j].z, 0, 0, 0);
       }

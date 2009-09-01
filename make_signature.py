@@ -69,10 +69,8 @@ for origin_idx, origin_label in enumerate(stop_labels) :
         else : delta_t = dest_vertex.payload.time - t0
         matrix[origin_idx, dest_idx] = delta_t
 print
-print matrix
 # force OD matrix symmetry for test
 matrix = (matrix + matrix.T) / 2
-print matrix
 
 # precompute mask matrix here, use view later
 times_x = arange(grid_extent[0] * 2) - grid_extent[0]
@@ -107,9 +105,10 @@ while (1) :
     pass_err_max = 0
     pass_err = 0
     n_iter   = 0
-    forces   = zeros( coords.shape )
     error_to = zeros( coords.shape[0] )
     times_to = zeros( coords.shape[0] )    
+    forces   = zeros( coords.shape )
+    forces_grid = forces.reshape( coords_grid.shape )
 
     temp_ttgrid = empty( grid_extent )
     for origin_idx in range( n_stops ) :
@@ -140,11 +139,11 @@ while (1) :
         # when norms fall to zero, division gives NaN
         # use nan_to_num() or myarr[np.isnan(myarr)] = 0
         uvectors = vectors / norms[:,newaxis]   # divide every 3vector element-wise by norms duplicated into axis 1
-        forces  += nan_to_num(uvectors * adjust[:,newaxis])   # filter out NaNs (from perfectly reproduced distances, which give null vectors)
+        forces  += nan_to_num(uvectors * adjust[:,newaxis]) / (n_stops * 2) # filter out NaNs (from perfectly reproduced distances, which give null vectors)
         # should this also be done after each full pass?
         # vels += accels  # instantaneous acceleration vectors added to existing velocities
         # WARNING following line is now very asymmetric application of forces.
-        # forces[origin_idx] -= forces.sum(axis=0)  # they should also push back collectively on the origin point 
+        # forces_grid[ tuple( stop_coords[origin_idx].round() ) ] -= nan_to_num(uvectors * adjust[:,newaxis]).sum(axis=0) / (n_gridpoints)  # they should also push back collectively on the origin point 
         # update pos here or after a full pass? after a pass looks much more stable and predictable.
         # coords  += vels * TIMESTEP  # timestep * velocity applied to move points
         # visu_pos(coords)
@@ -166,7 +165,7 @@ while (1) :
         n_iter += 1
         if n_iter % 10 == 0 : 
             print "%i%% (%i iterations averaging %f seconds)" % (n_iter * 100 / n_stops, n_iter, (time.time() - t_start) / n_iter)
-    accels  = forces / n_stops   # normalize by number of total origins per pass, not total destinations
+    accels  = forces # / n_stops   # normalize by number of total origins per pass, not total destinations
     vels    = accels * TIMESTEP  # Euler integration. Should be += but we consider that damping effectively cancels out all previous accelerations.
     coords += vels   * TIMESTEP  # Euler integration
     n_pass += 1
