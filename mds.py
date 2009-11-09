@@ -21,7 +21,7 @@ from   pycuda.compiler import SourceModule
 WALK_RANGE  = 1500 
 OBSTRUCTION = 1.4
 WALK_SPEED  = 1.3 # m/sec
-DIMENSIONS  = 3   
+DIMENSIONS  = 4   
 
 BIGINT = 100000
 
@@ -106,170 +106,191 @@ cuda.memcpy_htod(coords_gpu, coords)
 
 # times could be merged into forces kernel, if done by pixel not station.
 # integrate kernel could be GPUArray operation; also helps clean up code by using GPUArrays.
+# DIM should be replaced by python script, so as not to define twice. 
 mod = SourceModule("""
  
-    __global__ void ttime (
-        int origin_idx,
-        int max_x,
-        int max_y,
-        int n_stations,
-        int *station_coords,
-        int *station_times,
-        int *tt_grid,
-        int *time_template,
-        int walk_cells)
-    {
-        // for addressing into a linear array; cannot use z axis in blocks
-        int blockSize = (blockDim.x * blockDim.y);
-        int idx = (blockIdx.x * blockSize * gridDim.y) + (blockIdx.y * blockSize) + (threadIdx.x * blockDim.y) + threadIdx.y; 
-   
-        int x_0, y_0;
-        int big_offset, lil_offset;
-        int x, y;
-        if (idx < n_stations) {
-            x_0 = int(station_coords[idx * 2 + 0]);
-            y_0 = int(station_coords[idx * 2 + 1]);
-            for (x = - walk_cells; x < walk_cells; x++) {
-                for (y = - walk_cells; y < walk_cells; y++) {
-                    big_offset = ((x_0 + x) * max_y + (y_0 + y));
-                    lil_offset = ((walk_cells + x) * walk_cells * 2 + (walk_cells + y));
-                    // attention, atomic operations only work on ints
-                    // and slows it way down (8x) for big maps, take a chance on race conditions?
-                    // in that case everything can be floats. it looks to have little effect. there is visible noise in output...
-                    // maybe switch to atomic operations at the end? using per pixel ops would solve this problem.
-                    // atomicMin( &(tt_grid[big_offset]), time_template[lil_offset] + station_times[origin_idx * n_stations + idx] );
-                    tt_grid[big_offset] = min(tt_grid[big_offset], time_template[lil_offset] + station_times[origin_idx * n_stations + idx]);
-                    // tt_grid[big_offset] = time_template[lil_offset] + station_times[origin_idx * n_stations + idx];
-                }    
-            }
-       }
-    }
-
-    __global__ void force ( 
-        int   origin_idx,
+    #define DIM 4
+    #define OBSTRUCTION 1.4
+    #define WALK_SPEED  1.3
+    #define INF         0x7f800000 
+    #define N_NEARBY_STATIONS 10
+    
+    __global__ void unified (
+        int   n_stations,
         int   max_x,
         int   max_y,
-        int   D,
+        int   *station_coords, // load into shared mem as ints
+        int   *matrix,
         float *coords,
-        float *vectors, 
-        float *norms, 
-        int   *tt, 
-        float *adjust, 
-        float *forces, 
-        float *err,
-        int   normalize)
+        float *forces,
+        float *errors)
     {
-        int d;
-        float tmp = 0;
-        // for addressing into a linear array; cannot use z axis in blocks
-        int blockSize = (blockDim.x * blockDim.y);
-        int idx = (blockIdx.x * blockSize * gridDim.y) + (blockIdx.y * blockSize) + (threadIdx.x * blockDim.y) + threadIdx.y; 
+        float *origin_coord, *this_coord;
+        int   *matrix_row;
+        float *this_error;
+        float *this_force;
+        float vector[DIM];
+        float force[DIM]; 
+        float adjust, dist;
+        float error = 0;  // must initialize because error is cumulative per pass
+        float norm  = 0;  // must initialize because components accumulated
+        float tt, ds_tt;
+        int   d;
+        int   x = blockIdx.x * blockDim.x + threadIdx.x; 
+        int   y = blockIdx.y * blockDim.y + threadIdx.y; 
+        int   osx, osy, dsx, dsy;
+        int   os_idx, ds_idx;
+        __shared__ int   near_stations_idx   [N_NEARBY_STATIONS];
+        __shared__ float near_stations_dist  [N_NEARBY_STATIONS];  // could later be used to store matrix times. make an alias pointer?
+        __shared__ int   near_stations_x     [N_NEARBY_STATIONS];
+        __shared__ int   near_stations_y     [N_NEARBY_STATIONS];
+        __shared__ int   near_stations_coords[N_NEARBY_STATIONS][DIM];
+        
+        // this could be done once in another kernel before execution
+        // each cell calculates its own distances (saves them if enough space?)
+        // at each pass, block loads relevant its time-space coordinates
+        if (threadIdx.x == blockDim.x / 2 && threadIdx.y == blockDim.y / 2) {  // the thread at the middle of the block will collect nearby stations for the block
+            int   slots_filled = 0;
+            float max_dist = 0;
+            int   max_slot;
+            for (ds_idx = 0; ds_idx < n_stations; ds_idx++) {  // for every station,
+                dsx = station_coords[ds_idx * 2 + 0]; // get the destination station's geographic x coordinate 
+                dsy = station_coords[ds_idx * 2 + 1]; // and the destination station's geographic y coordinate.
+                dist = sqrt( pow(float(dsx - x), 2) + pow(float(dsy - y), 2)) * 100; // Find the geographic distance from the station to our texel
+                if (slots_filled < N_NEARBY_STATIONS) { // fill up all the slots first, keeping track of farthest station
+                    near_stations_idx [slots_filled] = ds_idx;
+                    near_stations_dist[slots_filled] = dist;
+                    if (dist > max_dist) {
+                        max_dist = dist;
+                        max_slot = slots_filled;
+                    } 
+                    slots_filled++;
+                } else { // repeatedly replace max slot with closer stations
+                    if (dist < max_dist) {
+                        near_stations_idx [max_slot] = ds_idx;
+                        near_stations_dist[max_slot] = dist;
+                        max_dist = 0;
+                        for (int slot = 0; slot < N_NEARBY_STATIONS; slot++) {
+                            if (near_stations_dist[slot] > max_dist) {
+                                max_dist = near_stations_dist[slot];
+                                max_slot = slot;
+                            }
+                        }
+                    }
+                }
+            } 
+            // We now have the N nearest station indices.
+            // Get their coords in geographic and time-space
+            for (int idx = 0; idx < N_NEARBY_STATIONS; idx++) {
+                ds_idx = near_stations_idx[idx];
+                near_stations_x[idx] = station_coords[ds_idx * 2 + 0]; 
+                near_stations_y[idx] = station_coords[ds_idx * 2 + 1]; 
+                for (d = 0; d < DIM; d++) {
+                    // BLAH near_stations_coords[idx][d] = coords[]
+                }
+            }
+        }
+        
+        if ( x < max_x && y < max_y ) {   // check that this thread is inside the map
+            this_coord = &( coords[(x * max_y + y) * DIM] );
+            this_force = &( forces[(x * max_y + y) * DIM] );
+            this_error = &( errors[ x * max_y + y       ] );
+            #pragma unroll
+            for (d = 0; d < DIM; d++) force[d] = 0;                // initialize force to 0. (Be sure to do this before the first station (outside loops!)
+            for (os_idx = 0; os_idx < n_stations; os_idx++) {         // For every origin station,
+                osx = station_coords[os_idx * 2 + 0];                  // Get the origin station's geographic x coordinate
+                osy = station_coords[os_idx * 2 + 1];                  // and its geographic y coordinate,
+                origin_coord = &( coords[(osx * max_y + osy) * DIM] ); // then a pointer to its time-space coordinates.
+                // begin time kernel equivalent
+                // could grab matrix line here into shared mem, as 8bit int in minutes
+                matrix_row = &( matrix[os_idx * n_stations] );         // Get a pointer to the relevant OD matrix row,
+                tt = INF;                                              // and set the current best travel time to +infinity.
+                // maybe speed up by using  manhattan distance - even correct in american cities - nope, doesn't speed up. global memory is the read slowdown.
+                for (ds_idx = 0; ds_idx < n_stations; ds_idx++) {      // For every destination station,
+                    dsx = station_coords[ds_idx * 2 + 0];              // get the destination station's geographic x coordinate 
+                    dsy = station_coords[ds_idx * 2 + 1];              // and the destination station's geographic y coordinate.
+                    dist = sqrt( pow(float(dsx - x), 2) + pow(float(dsy - y), 2)) * 100;    // Find the geographic distance from the station to our texel, then
+                    //if (dist > 3000) dist = INF;                       // ---changes neither speed nor convergence
+                    ds_tt = (dist * OBSTRUCTION / WALK_SPEED)          // derive a travel time from the origin station to this texel 
+                            + matrix_row[ds_idx];                      // through the destination station.
+                    tt = min(tt, ds_tt);                               // Save the travel time if it is better than the current best time.
+                    // could also use destination station to texel distance to make a force.
+                }
+                
+                #pragma unroll
+                for (d = 0; d < DIM; d++) {
+                    vector[d] = this_coord[d] - origin_coord[d];  // Find the vector from the origin station to this texel in time-space,
+                    norm += pow(vector[d], 2);                    // and accumulate the terms of its length (norm).
+                }
+                norm   = sqrt(norm);   // Finally, take the square root to find the distance in time-space.
+                adjust = tt - norm ;   // How much would the point need to move to match true travel time?
+                
+                // use __isnan()                                                                                                    
+                if (norm != 0) {       // avoid propagating nans - is there a way to do this without diverging? division by zero should give 0, would give right result... reformulate...
+                    #pragma unroll
+                    for (d = 0; d < DIM; d++) {
+                        force[d] += ((vector[d] / norm) * adjust) / n_stations;      // add the shortest travel time force to the cumulative force for this texel
+                                                                                     // changed = to += and it still doesn't work!
+                    }
+                    error += abs(adjust);
+                }
+            }
 
-        if (idx < max_x * max_y) 
-        {
-            for (d = 0; d < D; d++)
-                tmp += pow((vectors[idx * D + d] = ( coords[idx * D + d] - coords[origin_idx * D + d]) ), float(2.0) );
-            norms[idx]  = sqrt(tmp); 
-            adjust[idx] = float(tt[idx]) - norms[idx];
-            // check for divide by zero - avoid propagating NANs.
-            // if (norms[idx] != 0) 
-            if (norms[idx] != 0 && tt[idx] != 100000) 
-                for (d = 0; d < D; d++)
-                    // be sure to use a float to normalize! otherwise stable configuration drifts. (NO...)
-                    // maybe drift is caused by difference between integral station coordinates and real coordinates. NO
-                    // maybe caused by lack of nan_to_num? maybe just normal convergence behavior!
-                    forces[idx * D + d] += ( vectors[idx * D + d] / norms[idx] ) * adjust[idx] / float(normalize); 
-            err[idx] += abs(adjust[idx]);
+            // ATTENTION: the following lines move the coordinates, so if blocks exceed number of processors available,
+            // some points will move before the others finish (or even start) calculating. This gives a chunky effect on output.
+            // __threadfence(); is not sufficient so I split them off into another kernel.
+
+            #pragma unroll
+            for (d = 0; d < DIM; d++) {
+                this_force[d]  = force[d]; // Output forces to device global memory.
+            }
+            *this_error = error;  // Output errors to device global memory
         }
     }
-
+    
     __global__ void integrate (
         int   max_x,
         int   max_y,
-        int   D,
         float *coords,
-        float *vels)
+        float *forces)
     {
-       int d;
-        // for addressing into a linear array; cannot use z axis in blocks
-        int blockSize = (blockDim.x * blockDim.y);
-        int idx = (blockIdx.x * blockSize * gridDim.y) + (blockIdx.y * blockSize) + (threadIdx.x * blockDim.y) + threadIdx.y; 
-        if (idx < max_x * max_y) 
-            for (d = 0; d < D; d++)
-                coords[idx * D + d] += vels[idx * D + d];
+        int   d;
+        float *this_coord;
+        float *this_force;
+        int   x = blockIdx.x * blockDim.x + threadIdx.x; 
+        int   y = blockIdx.y * blockDim.y + threadIdx.y; 
+        if ( x < max_x && y < max_y ) {   // check that this thread is inside the map
+            this_coord = &( coords[(x * max_y + y) * DIM] );
+            this_force = &( forces[(x * max_y + y) * DIM] );
+            #pragma unroll
+            for (d = 0; d < DIM; d++) {
+                this_coord[d] += this_force[d]; // integrate - could be done after each iteration instead of all at once at the end.
+            }
+        }
     }
-    
+                
     """)
 
-ttime_kernel     = mod.get_function("ttime")
-force_kernel     = mod.get_function("force")
+unified_kernel   = mod.get_function("unified")
 integrate_kernel = mod.get_function("integrate")
 
-tt_grid = np.empty( grid_dim, dtype=np.int32 ) 
 n_pass  = 0        
 t_start = time.time()
-while (1) :
+while ( n_pass < 300 ) :
     t_start_inner = time.time()
-    # seems to be an acceptable way to zeo floats on this hardware
+    # seems to be an acceptable way to zero floats on this hardware
     cuda.memset_d32(err_gpu,    0, n_gridpoints)
-    cuda.memset_d32(adjust_gpu, 0, n_gridpoints) # not necessary, for testing
-    cuda.memset_d32(norms_gpu,  0, n_gridpoints) # not necessary, for testing
     cuda.memset_d32(forces_gpu, 0, n_gridpoints * DIMENSIONS)
             
-    n_iter  = 0
-    for origin_idx in range( n_stations ) :
-        # print 'origin: ', origin_idx
-        
-        cuda.memset_d32(tt_gpu, BIGINT, n_gridpoints) # 0x7f800000 is bit pattern for positive infinity
-        ttime_kernel(np.int32(origin_idx), max_x, max_y, np.int32(n_stations), station_coords_gpu, matrix_gpu, tt_gpu, time_template_gpu, walk_cells, block=(16,16,1), grid=(32,1))
-        autoinit.context.synchronize()
-        
-#        station_times = matrix[origin_idx]
-#        tt_grid.fill(BIGINT) # was np.inf
-#        for dest_idx in range( n_stations ) :
-#            # set up time window
-#            dest_coords = station_coords[dest_idx]
-#            x_0 = round(dest_coords[0] - walk_cells)
-#            x_1 = round(dest_coords[0] + walk_cells)
-#            y_0 = round(dest_coords[1] - walk_cells)
-#            y_1 = round(dest_coords[1] + walk_cells)
-#            np.add(time_template, station_times[dest_idx], temp_time_template)
-#            tt_grid_view = tt_grid[x_0:x_1, y_0:y_1]
-#            np.minimum(tt_grid_view, temp_time_template, tt_grid_view)
-#
-#        # cuda.memcpy_htod(tt_gpu, tt_grid)
-#        print time_template
-#        
-#        pl.imshow(  tt_grid, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
-#        pl.colorbar()
-#        pl.show()
-#        pl.close()
-#        cuda.memcpy_dtoh(tt_grid, tt_gpu)
-#        print tt_grid
-#        pl.imshow(  tt_grid.reshape(grid_dim).T / 60, cmap=mymap, origin='bottom', vmin=0, vmax=100 )
-#        pl.colorbar()
-#        pl.show()
-#        pl.close()
-
-        # kludge, this indexing should be done differently.
-        c = station_coords_int[origin_idx]
-        c = c[0] * max_y + c[1]   # seems tested right... C language is row-major
-        force_kernel(c, max_x, max_y, np.int32(DIMENSIONS), coords_gpu, vectors_gpu, norms_gpu, tt_gpu, adjust_gpu, forces_gpu, err_gpu, np.int32(n_stations), block=(16,16,1), grid=(32,40))
-        autoinit.context.synchronize()
-        
-        if n_iter % 30  == 5 and n_pass < -1:
-            cuda.memcpy_dtoh(grid, adjust_gpu)
-            pl.imshow( grid.reshape( (max_x, max_y) ).T / 60.0, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
-            pl.colorbar()
-            pl.show()
-
-        n_iter += 1
-        if n_iter % 10 == 0 : 
-            sys.stdout.write( "\r%i%% (%i stations averaging %f seconds) " % (n_iter * 100 / n_stations, n_iter, (time.time() - t_start_inner) / n_iter) )
-            sys.stdout.flush()
-            
-    integrate_kernel( max_x, max_y, np.int32(DIMENSIONS), coords_gpu, forces_gpu, err_gpu, block=(16,16,1), grid=(32,40) )
+    # attention to grid sizes: if you don't run the integrator on the coordinates connected to stations, they don't move... so the whole thing stabilizes in a couple of cycles.
+    
+    unified_kernel(np.int32(n_stations), max_x, max_y, station_coords_gpu, matrix_gpu, coords_gpu, forces_gpu, err_gpu, block=(16,16,1), grid=(38, 38))    
+    #unified_kernel(np.int32(10), max_x, max_y, station_coords_gpu, matrix_gpu, coords_gpu, forces_gpu, err_gpu, block=(16,16,1), grid=(38, 38))    
     autoinit.context.synchronize()
+    
+    integrate_kernel(max_x, max_y, coords_gpu, forces_gpu, block=(16,16,1), grid=(38, 38))    
+    autoinit.context.synchronize()
+    
     n_pass += 1
     if n_pass % 1 == 0:
         cuda.memcpy_dtoh(coords, forces_gpu)
@@ -287,6 +308,13 @@ while (1) :
         pl.colorbar()
         pl.savefig( 'img/err%03d.png' % n_pass )
         pl.close()
+
+#        cuda.memcpy_dtoh(grid, err_gpu)
+#        pl.imshow( grid.reshape(grid_dim).T / 60, cmap=mymap, origin='bottom', vmin=0, vmax=100 )
+#        pl.title( 'Test Output - step %03d' %n_pass )
+#        pl.colorbar()
+#        pl.savefig( 'img/err%03d.png' % n_pass )
+#        pl.close()
         
     print "End of pass number %i." % n_pass
     print "Runtime %i minutes, average pass length %f minutes. " % ( (time.time() - t_start)/60, (time.time() - t_start) / n_pass / 60.0 )
