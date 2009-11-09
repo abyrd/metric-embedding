@@ -1,8 +1,8 @@
 
-#define DIM               4
 #define OBSTRUCTION       1.4
 #define WALK_SPEED        1.3
 #define INF               0x7f800000 
+#define DIM               DIMENSIONS_PYTHON
 #define N_NEARBY_STATIONS N_NEARBY_STATIONS_PYTHON
 #define N_STATIONS        N_STATIONS_PYTHON
 
@@ -11,8 +11,9 @@ texture<int, 2, cudaReadModeElementType> tex_station_coords;
 texture<int, 2, cudaReadModeElementType> tex_matrix;
 
 
+
 /*
- *  stations kernel
+ *  [ stations kernel ]
  *  
  *  Finds nearby stations to each thread block and saves them.
  */
@@ -64,6 +65,7 @@ __global__ void stations (int *glb_near_stations)
             }
         } 
         int *p = glb_near_stations + (blockIdx.x * gridDim.y + blockIdx.y) * N_NEARBY_STATIONS;
+        // should index the pointer or increment?
         for (int i = 0; i < N_NEARBY_STATIONS; i++) {                                   // Go through the completed list of nearby stations.
             *(p++) = blk_near_idx[i];                                                   // For each index that was recorded:
         }
@@ -73,23 +75,23 @@ __global__ void stations (int *glb_near_stations)
   
 
 /*
- *  "unified" CUDA kernel.
- *  The new monolithic time-space MDS kernel.
+ *  [ forces kernel ]
+ *  
  *  Finds both network travel times and forces on a texel-by-texel basis.
  */
  
-__global__ void unified (
+__global__ void forces (
     int   n_stations,
     int   s_low,
     int   s_high,
     int   max_x,
     int   max_y,
-    int   *glb_station_coords,
-    int   *glb_matrix,
-    float *glb_coords,
+    float *glb_coords, // make them a texture? test performance - this is an optimisation.
     float *glb_forces,
+    float *glb_weights,
     float *glb_errors,
-    int   *debug)
+    int   *debug,
+    float *debug_img)
 {
     float coord [DIM];
     float vector[DIM];
@@ -97,10 +99,15 @@ __global__ void unified (
     float *glb_coord;
     float *glb_error;
     float *glb_force;
+    float *glb_weight;
     float adjust, dist;
     float error = 0;  // must initialize because error is cumulative per pass
-    float norm  = 0;  // must initialize because components accumulated
+    float error_here;
+    float error_max = 0;
+    float norm;
     float tt, ds_tt;
+    float weight = 0;
+    float weight_here;
     int   d;
     int   x = blockIdx.x * blockDim.x + threadIdx.x; 
     int   y = blockIdx.y * blockDim.y + threadIdx.y; 
@@ -144,23 +151,24 @@ __global__ void unified (
     
     __syncthreads();  // All threads in this block wait here, to avoid reading from the near stations list until it is fully built.
 
+    // if (isnan(glb_coords[(x * max_y + y) * DIM])) return; // should kill off useless threads, but also those that should be loading shared memory. shared mem should be exchanged for registers anyway.
     
     // TO DO: block-level cacheing of global memory accesses, __prefixed fast math functions.
-    
-    if ( x < max_x && y < max_y ) {                                                     // Check that this thread is inside the map.
+    // when changing code, I see slight differences in the evolution of error images - this is probably due to random initial configuration of points.
+    if ( x < max_x && y < max_y ) {          // Check that this thread is inside the map.
         glb_coord = &( glb_coords[(x * max_y + y) * DIM] );                             // Make a pointer to this texel's time-space coordinate in global memory.
         for (d = 0; d < DIM; d++) coord[d] = glb_coord[d];                              // Copy the time-space coordinate for this texel from global to local memory.
         for (d = 0; d < DIM; d++) force[d] = 0;                                         // Initialize this timestep's force to 0. (Do this before calculating forces, outside the loops!)
         for (os_idx = s_low; os_idx < s_high; os_idx++) {                               // For every origin station:
-            os_x = glb_station_coords[os_idx * 2 + 0];                                  // Get the origin station's geographic x coordinate.
-            os_y = glb_station_coords[os_idx * 2 + 1];                                  // Get the origin station's geographic y coordinate.
+            os_x = tex2D(tex_station_coords, os_idx, 0);                                  // Get the origin station's geographic x coordinate.
+            os_y = tex2D(tex_station_coords, os_idx, 1);                                  // Get the origin station's geographic y coordinate.
             if (threadIdx.x == 1 && threadIdx.y == 1) {                                 // The first thread in each block fetches some origin-specific data to block shared memory.
                     float *glb_origin_coord = &(glb_coords[(os_x*max_y + os_y) * DIM]); // Make a pointer to the gobal time-space coordinates for this origin station.
-                    int   *glb_matrix_row   = &(glb_matrix[os_idx * n_stations] );      // Make a pointer to the relevant global OD matrix row.
                     for (d = 0; d < DIM; d++)                        
-                        blk_origin_coord[d] = glb_origin_coord[d];                      // Copy origin time-space coordinates from global to block-shared memory.
+                        blk_origin_coord[d] = glb_origin_coord[d];                      // Copy origin time-space coordinates from global to block-shared memory. Maybe it should be in register.
                     for (int i = 0; i < N_NEARBY_STATIONS; i++) 
-                        blk_near_time[i] = glb_matrix_row[blk_near_idx[i]];             // Copy relevant OD matrix row entries into block-shared nearby stations table.
+                        blk_near_time[i] = tex2D(tex_matrix, os_idx, blk_near_idx[i]);  // Copy relevant OD matrix row entries into block-shared nearby stations table. Texture cache is probably sufficient, locality is very good. Test performance later.
+                        // this caching is not really necessary since you have textured it - test this idea later.
             }
             __syncthreads();                                                            // All threads in the block must wait for thread (1, 1) to load data into block-shared memory.
             tt = INF;                                                                   // Set the current best travel time to +infinity.
@@ -174,38 +182,54 @@ __global__ void unified (
                 ds_tt = (dist * OBSTRUCTION / WALK_SPEED) + blk_near_time[i];           // Derive a travel time from the origin station to our texel, through the current destination station.
                 tt = min(tt, ds_tt);                                                    // Save this travel time if it is better than the current best.
             }                                                                           // We could also use the destination station to texel distance to make additional forces.
-            norm = 0; // ADDED RECENTLY... WAS WRONG
+            norm = 0; // ADDED RECENTLY... WAS WRONG, initialized at declaration instead of just before accumulation in inner loop
             for (d = 0; d < DIM; d++) {
                 vector[d] = coord[d] - blk_origin_coord[d];                             // Find the vector from the origin station to this texel in time-space.
                 norm     += pow(vector[d], 2);                                          // Accumulate terms to find the norm.
             }
             norm   = sqrt(norm);                                                        // Take the square root to find the norm, i.e. the distance in time-space.
             adjust = tt - norm ;                                                        // How much would the point need to move to match the best travel time?
-            
-                                                                                        // use __isnan() ? anyway, this is in the outer loop, and should almost never diverge within a warp.                                                                                                 
+            // global influence cutoff above T minutes
+            // if (tt > 60 * 100) adjust = 0;
+            // global influence scaling like gravity, relative to tt - scale adjustment according to travel time to point
+            weight_here = (tt < 120*60) * (1 - 1 / (120*60 - (tt-1)));
+            weight += weight_here;
+                                                                                                                                                                                                                                                                                                                            // use __isnan() ? anyway, this is in the outer loop, and should almost never diverge within a warp.                                                                                                 
             if (norm != 0) {                                                            // Avoid propagating nans through division by zero. Force should be 0, so add skip this step / add nothing.
                 for (d = 0; d < DIM; d++) 
-                    force[d] += ((vector[d] / norm) * adjust) / n_stations;             // Find a unit vector, scale it by the desired 'correct' time-space distance, and normalize by the number of total forces acting.
-                error += abs(adjust);                                                   // Accumulate error to each texel, so we can observe progress as the program runs.
+                    force[d] += ((vector[d] / norm) * adjust * weight_here);            // Find a unit vector, scale it by the desired 'correct' time-space distance. (weighted)
+                // why is this in the loop?
+                error_here = abs(adjust) * weight_here;                                    // Accumulate error to each texel, so we can observe progress as the program runs. (weighted)
+                error += error_here;
+                error_max = max(error_max, error_here);
             }
-            // TEST TRAVEL TIME MAP COMPUTATION
-            // error = tt;
+                        
         }
 
+        // DEBUGGING OUTPUT
+        // visualize travel times for last origin station
+        // debug_img[ x * max_y + y ] = tt;
+        
         // Force computation for all origin stations is now finished for this timestep.
         // We should perform an Euler integration to move the coordinates.
         // However, when the number of executing blocks exceeds number of processors on the device,
         // some points will move before others finish (or even start) calculating.
         // Therefore integration has been split off into another kernel to allow global, device-level thread synchronization.
 
-        glb_force = glb_forces + (x * max_y + y) * DIM;     // Make a pointer to a force record in global memory.
-        glb_error = glb_errors + (x * max_y + y)      ;     // Make a pointer to an error record in global memory.
+        glb_force  = glb_forces  + (x * max_y + y) * DIM;     // Make a pointer to a force record in global memory. WAIT you can do this with C array notation
+        glb_error  = glb_errors  + (x * max_y + y)      ;     // Make a pointer to an error record in global memory.
+        glb_weight = glb_weights + (x * max_y + y)      ;     // Make a pointer to an error record in global memory.
         if (s_low > 0) {
             for (d = 0; d < DIM; d++) force[d] += glb_force[d];     // ADD Output forces to device global memory.
-            error += *glb_error;
+            error  += *glb_error;
+            weight += *glb_weight;
+            // visualize max error per cell
+            error_max = max(error_max, debug_img[ x * max_y + y ]);
         }
         for (d = 0; d < DIM; d++) glb_force[d]  = force[d];     // SET Output forces to device global memory.
         *glb_error  = error;                                     // SET Output this texel's cumulative error to device global memory.
+        *glb_weight = weight;                                     // SET Output this texel's cumulative error to device global memory.
+        debug_img[ x * max_y + y ] = error_max;
     }
 }
 
@@ -220,16 +244,20 @@ __global__ void integrate (
     int   max_x,
     int   max_y,
     float *glb_coords,
-    float *glb_forces)
+    float *glb_forces,
+    float *glb_weights)
 {
     int   d;
     float *glb_coord;
     float *glb_force;
+    float *glb_weight;
     int   x = blockIdx.x * blockDim.x + threadIdx.x; 
     int   y = blockIdx.y * blockDim.y + threadIdx.y; 
-    if ( x < max_x && y < max_y ) {                             // Check that this thread is inside the map
-        glb_coord = &( glb_coords[(x * max_y + y) * DIM] );     // Make a pointer to time-space coordinates in global memory
-        glb_force = &( glb_forces[(x * max_y + y) * DIM] );     // Make a pointer to forces in global memory
-        for (d = 0; d < DIM; d++) glb_coord[d] += glb_force[d]; // Euler integration, 1 timestep
+    if ( x < max_x && y < max_y ) {                              // Check that this thread is inside the map
+        glb_coord  = &( glb_coords [(x * max_y + y) * DIM] );    // Make a pointer to time-space coordinates in global memory
+        glb_force  = &( glb_forces [(x * max_y + y) * DIM] );    // Make a pointer to forces in global memory
+        glb_weight = &( glb_weights[(x * max_y + y)      ] );    // Make a pointer to forces in global memory
+        for (d = 0; d < DIM; d++) glb_force[d] /= *glb_weight;    // Scale forces by the sum of all weights acting on this cell
+        for (d = 0; d < DIM; d++) glb_coord[d] += glb_force [d]; // Euler integration, 1 timestep
     }
 }
