@@ -2,18 +2,22 @@
 #define DIM               4
 #define OBSTRUCTION       1.4
 #define WALK_SPEED        1.3
-#define N_NEARBY_STATIONS 10
 #define INF               0x7f800000 
+#define N_NEARBY_STATIONS N_NEARBY_STATIONS_PYTHON
+#define N_STATIONS        N_STATIONS_PYTHON
 
-texture<int, 1, cudaReadModeElementType> near_stations;
-texture<int, 2, cudaReadModeElementType> station_coords;
-texture<int, 2, cudaReadModeElementType> matrix;
-texture<int, 1, cudaReadModeElementType> testtexture;
+texture<int, 1, cudaReadModeElementType> tex_near_stations;
+texture<int, 2, cudaReadModeElementType> tex_station_coords;
+texture<int, 2, cudaReadModeElementType> tex_matrix;
 
-__global__ void stations (
-                         int   n_stations,
-                         int   *glb_station_coords,
-                         int   *glb_near_stations)
+
+/*
+ *  stations kernel
+ *  
+ *  Finds nearby stations to each thread block and saves them.
+ */
+
+__global__ void stations (int *glb_near_stations)
 {
     int   d;
     float dist;
@@ -22,6 +26,7 @@ __global__ void stations (
     int   os_x, os_y, ds_x, ds_y;
     int   os_idx, ds_idx;
     
+    //replace with local (register) variables?
     __shared__ float blk_origin_coord [DIM];
     __shared__ float blk_near_time[N_NEARBY_STATIONS];   // First used for selecting nearby stations, then for cacheing rows from the OD matrix.
     __shared__ int   blk_near_idx [N_NEARBY_STATIONS];
@@ -32,9 +37,9 @@ __global__ void stations (
         int   slots_filled = 0;
         float max_dist = 0;
         int   max_slot;
-        for (ds_idx = 0; ds_idx < n_stations; ds_idx++) {                               // For every station:
-            ds_x = glb_station_coords[ds_idx * 2 + 0];                                  // Get the station's geographic x coordinate. 
-            ds_y = glb_station_coords[ds_idx * 2 + 1];                                  // Get the station's geographic y coordinate.
+        for (ds_idx = 0; ds_idx < N_STATIONS; ds_idx++) {                               // For every station:
+            ds_x = tex2D(tex_station_coords, ds_idx, 0);                                  // Get the station's geographic x coordinate. 
+            ds_y = tex2D(tex_station_coords, ds_idx, 1);                                  // Get the station's geographic y coordinate.
             dist = sqrt( pow(float(ds_x - x), 2) + pow(float(ds_y - y), 2)) * 100;      // Find the geographic distance from the station to this texel.
             if (slots_filled < N_NEARBY_STATIONS) {                                     // First, fill up all the nearby station slots, keeping track of the 'worst' station.
                 blk_near_idx [slots_filled] = ds_idx;
@@ -60,16 +65,12 @@ __global__ void stations (
         } 
         int *p = glb_near_stations + (blockIdx.x * gridDim.y + blockIdx.y) * N_NEARBY_STATIONS;
         for (int i = 0; i < N_NEARBY_STATIONS; i++) {                                   // Go through the completed list of nearby stations.
-            //*(p + offset++) = i*1000 + offset; //blk_near_idx[i];                                                   // For each index that was recorded:
-            //*(p + offset++) = i*1000 + offset; //= glb_station_coords[ds_idx * 2 + 0];                         // Copy its x geographic coordinate from global to block shared memory.
-            //*(p + offset++) = i*1000 + offset; //glb_station_coords[ds_idx * 2 + 1];                         // Copy its y geographic coordinate from global to block shared memory.
-            //*(p + offset++) = i*1000 + offset;
             *(p++) = blk_near_idx[i];                                                   // For each index that was recorded:
         }
     }
     
 }    
-    
+  
 
 /*
  *  "unified" CUDA kernel.
@@ -88,9 +89,7 @@ __global__ void unified (
     float *glb_coords,
     float *glb_forces,
     float *glb_errors,
-    int   *test1,
-    int   *test2,
-    int   *test3)
+    int   *debug)
 {
     float coord [DIM];
     float vector[DIM];
@@ -117,28 +116,28 @@ __global__ void unified (
     // ATTENTION this causes errors for some reason for blocks outside the mapped geographic area
     // OR is it when there are stations outside the grid?
     // watch out for grid dimensions
-    
-    if (threadIdx.x == int(blockDim.x / 2) && threadIdx.y == int(blockDim.y / 2)) {     // The thread in the physical center of the block builds a list of nearby stations.
+
+    /* LOAD BY EACH THREAD... not really necessary, and doesn't work
+    int thread_num = threadIdx.x * blockDim.y + y;
+    if (thread_num < N_NEARBY_STATIONS) {
+        int s_idx = tex1Dfetch(tex_near_stations, (blockIdx.x * gridDim.y + blockIdx.y) * N_NEARBY_STATIONS + thread_num);
+        blk_near_idx[thread_num] = s_idx;
+        blk_near_x  [thread_num] = tex2D(tex_station_coords, s_idx, 0);
+        blk_near_y  [thread_num] = tex2D(tex_station_coords, s_idx, 1);
+        if (blockIdx.x == 1 && blockIdx.y == 1) {
+            debug[thread_num] = blk_near_idx[thread_num];
+            debug[thread_num] = 55;
+        }
+    }
+    */
+    if (threadIdx.x == 1 && threadIdx.y == 1) {     
         for (int i = 0; i < N_NEARBY_STATIONS; i++) {
-            /*
-            int idx = tex3D(near_stations, blockIdx.x, blockIdx.y, i);
+            int idx = tex1Dfetch(tex_near_stations, (blockIdx.x * gridDim.y + blockIdx.y) * N_NEARBY_STATIONS + i);
             blk_near_idx [i] = idx;
-            blk_near_x   [i] = tex2D(station_coords, idx, 0);
-            blk_near_y   [i] = tex2D(station_coords, idx, 1);
-            */
-            blk_near_idx [i] = 0;
-            blk_near_x   [i] = 0;
-            blk_near_y   [i] = 0;
-            if (blockIdx.x == 12) {
-                //test1[i] = tex3D(near_stations, blockIdx.x, blockIdx.y, i);
-                // test1[i] = tex1Dfetch(near_stations, i);
-                for (int z=0; z < 45; z++) {
-                    test1[z] = tex2D(matrix, z, 0);
-                    test2[z] = tex2D(matrix, z, 1);
-                    test3[z] = tex2D(matrix, z, 2);
-                }
-                // test3[i] = tex1Dfetch(testtexture, i);
-                // test3[i] = 854705664.0 * tex1D(testtexture, float(i));
+            blk_near_x   [i] = tex2D(tex_station_coords, idx, 0);
+            blk_near_y   [i] = tex2D(tex_station_coords, idx, 1);
+            if (blockIdx.x == 10 && blockIdx.y == 30) {
+               debug[i] = blk_near_idx[i];
             }
         }
     }
