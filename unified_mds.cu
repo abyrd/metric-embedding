@@ -5,8 +5,10 @@
 #define N_NEARBY_STATIONS 10
 #define INF               0x7f800000 
 
-texture<int, 3> near_stations;
-texture<int, 1> station_coords;
+texture<int, 1, cudaReadModeElementType> near_stations;
+texture<int, 2, cudaReadModeElementType> station_coords;
+texture<int, 2, cudaReadModeElementType> matrix;
+texture<int, 1, cudaReadModeElementType> testtexture;
 
 __global__ void stations (
                          int   n_stations,
@@ -117,43 +119,32 @@ __global__ void unified (
     // watch out for grid dimensions
     
     if (threadIdx.x == int(blockDim.x / 2) && threadIdx.y == int(blockDim.y / 2)) {     // The thread in the physical center of the block builds a list of nearby stations.
-        int   slots_filled = 0;
-        float max_dist = 0;
-        int   max_slot;
-        for (ds_idx = 0; ds_idx < n_stations; ds_idx++) {                               // For every station:
-            ds_x = glb_station_coords[ds_idx * 2 + 0];                                  // Get the station's geographic x coordinate. 
-            ds_y = glb_station_coords[ds_idx * 2 + 1];                                  // Get the station's geographic y coordinate.
-            dist = sqrt( pow(float(ds_x - x), 2) + pow(float(ds_y - y), 2)) * 100;      // Find the geographic distance from the station to this texel.
-            if (slots_filled < N_NEARBY_STATIONS) {                                     // First, fill up all the nearby station slots, keeping track of the 'worst' station.
-                blk_near_idx [slots_filled] = ds_idx;
-                blk_near_time[slots_filled] = dist;
-                if (dist > max_dist) {
-                    max_dist = dist;
-                    max_slot = slots_filled;
-                } 
-                slots_filled++;
-            } else {                                                                    // Then, keep replacing the worst station each time a closer one is found.
-                if (dist < max_dist) {
-                    blk_near_idx [max_slot] = ds_idx;
-                    blk_near_time[max_slot] = dist;
-                    max_dist = 0;
-                    for (int slot = 0; slot < N_NEARBY_STATIONS; slot++) {              // Scan through the list to find the new worst.
-                        if (blk_near_time[slot] > max_dist) {
-                            max_dist = blk_near_time[slot];
-                            max_slot = slot;
-                        }
-                    }
+        for (int i = 0; i < N_NEARBY_STATIONS; i++) {
+            /*
+            int idx = tex3D(near_stations, blockIdx.x, blockIdx.y, i);
+            blk_near_idx [i] = idx;
+            blk_near_x   [i] = tex2D(station_coords, idx, 0);
+            blk_near_y   [i] = tex2D(station_coords, idx, 1);
+            */
+            blk_near_idx [i] = 0;
+            blk_near_x   [i] = 0;
+            blk_near_y   [i] = 0;
+            if (blockIdx.x == 12) {
+                //test1[i] = tex3D(near_stations, blockIdx.x, blockIdx.y, i);
+                // test1[i] = tex1Dfetch(near_stations, i);
+                for (int z=0; z < 45; z++) {
+                    test1[z] = tex2D(matrix, z, 0);
+                    test2[z] = tex2D(matrix, z, 1);
+                    test3[z] = tex2D(matrix, z, 2);
                 }
+                // test3[i] = tex1Dfetch(testtexture, i);
+                // test3[i] = 854705664.0 * tex1D(testtexture, float(i));
             }
-        } 
-        for (int i = 0; i < N_NEARBY_STATIONS; i++) {                                   // Go through the completed list of nearby stations.
-            ds_idx = blk_near_idx[i];                                                   // For each index that was recorded:
-            blk_near_x[i] = glb_station_coords[ds_idx * 2 + 0];                         // Copy its x geographic coordinate from global to block shared memory.
-            blk_near_y[i] = glb_station_coords[ds_idx * 2 + 1];                         // Copy its y geographic coordinate from global to block shared memory.
         }
     }
     
     __syncthreads();  // All threads in this block wait here, to avoid reading from the near stations list until it is fully built.
+
     
     // TO DO: block-level cacheing of global memory accesses, __prefixed fast math functions.
     

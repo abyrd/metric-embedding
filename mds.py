@@ -1,4 +1,4 @@
-#!run me with python
+#!/opt/local/bin/python
 
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
@@ -97,10 +97,10 @@ cuda.memcpy_htod(coords_gpu, coords)
 near_stations = gpuarray.zeros ((cuda_grid_shape[0], cuda_grid_shape[1], 10), dtype=np.int32)
 near_stations_gpu = near_stations.gpudata
 
-test1_gpu = cuda.mem_alloc( 10*4 ) # for holding test results exported from device
-test2_gpu = cuda.mem_alloc( 10*4 ) # for holding test results exported from device
-test3_gpu = cuda.mem_alloc( 10*4 ) # for holding test results exported from device
-test      = np.zeros( 10, dtype = np.int32 ) # for holding test results
+test      = np.zeros( 100, dtype = np.int32 ) # for holding test results
+test1_gpu = cuda.mem_alloc( test.nbytes ) # for holding test results exported from device
+test2_gpu = cuda.mem_alloc( test.nbytes ) # for holding test results exported from device
+test3_gpu = cuda.mem_alloc( test.nbytes ) # for holding test results exported from device
 
 # times could be merged into forces kernel, if done by pixel not station.
 # integrate kernel could be GPUArray operation; also helps clean up code by using GPUArrays.
@@ -113,10 +113,70 @@ integrate_kernel = mod.get_function("integrate")
 
 stations_kernel(np.int32(n_stations), station_coords_gpu, near_stations_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
 autoinit.context.synchronize()
-near_stations.bind_to_texref_ext(mod.get_texref('near_stations'), channels=1)
-station_coords_int.bind_to_texref_ext(mod.get_texref('station_coords'), channels=1)
 
+near_stations_texref = mod.get_texref('near_stations')
+# borrowed from pycuda slicing code
+near_stations_1D = gpuarray.GPUArray(
+                    shape=(near_stations.size, ),
+                    dtype=near_stations.dtype,
+                    allocator=near_stations.allocator,
+                    base=near_stations,
+                    gpudata=int(near_stations.gpudata))
+                    
+print '3d rep:'
 print near_stations
+print '1D rep:'
+print near_stations_1D
+near_stations.bind_to_texref_ext(near_stations_texref, channels=1)
+print near_stations_texref.get_format()
+print near_stations_texref.get_filter_mode()
+print near_stations_texref.get_address_mode(0)
+print near_stations_texref.get_address_mode(1)
+print near_stations_texref.get_address_mode(2)
+print near_stations_texref.get_flags()
+#sys.exit()
+
+station_coords_texref = mod.get_texref('station_coords')
+station_coords_int.bind_to_texref_ext(station_coords_texref, channels=1)
+# cuda.matrix_to_texref(station_coords, station_coords_texref, order="C")
+
+def bind_to_texref_ext_2D(self, texref, channels=1, allow_offset=False):
+    assert len(self.shape) == 2
+    read_as_int = np.integer in self.dtype.type.__mro__
+
+    ad = cuda.ArrayDescriptor()
+    ad.width, ad.height = self.shape
+    ad.format = cuda.dtype_to_array_format(self.dtype)
+    ad.num_channels = channels
+    if read_as_int:
+        texref.set_flags(texref.get_flags() | cuda.TRSF_READ_AS_INTEGER)
+
+    texref.set_address_2d(self.gpudata, ad, 255) #self.dtype.itemsize)
+
+#    if read_as_int:
+#        texref.set_flags(texref.get_flags() | cuda.TRSF_READ_AS_INTEGER)
+
+matrix_texref = mod.get_texref('matrix')
+matrix = np.zeros((64, 64), dtype=np.int32)
+for i in range(len(matrix)) :
+    for j in range(len(matrix)) :
+        matrix[i, j] = i*100 + j
+
+matrix_gpu = gpuarray.to_gpu(matrix)
+bind_to_texref_ext_2D(matrix_gpu, matrix_texref)
+matrix_texref.set_filter_mode(cuda.filter_mode.LINEAR)
+#cuda.matrix_to_texref(matrix, matrix_texref, order="C")
+
+testtexture_array = gpuarray.to_gpu(np.array(range(0, 10), dtype=np.int32) )
+print testtexture_array
+testtexture_texref = mod.get_texref('testtexture')
+testtexture_texref.set_address_mode(0, cuda.address_mode.CLAMP)
+testtexture_texref.set_address_mode(1, cuda.address_mode.CLAMP)
+testtexture_texref.set_filter_mode(cuda.filter_mode.POINT)
+assert testtexture_texref.get_flags() == 0
+print testtexture_texref
+testtexture_array.bind_to_texref_ext(testtexture_texref, channels=1)
+
 #while (1):
 #    autoinit.context.synchronize()
 
@@ -132,7 +192,8 @@ while (1) :
         if subset_high > n_stations : subset_high = n_stations
         sys.stdout.write( "\rLaunching kernel for station range %03i to %03i of %03i." % (subset_low, subset_high, n_stations) )
         sys.stdout.flush()
-        unified_kernel(np.int32(n_stations), np.int32(subset_low), np.int32(subset_high), max_x, max_y, station_coords_gpu, matrix_gpu, coords_gpu, forces_gpu, error_gpu, test1_gpu, test2_gpu, test3_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
+        # texrefs in call seems to change nothing.
+        unified_kernel(np.int32(n_stations), np.int32(subset_low), np.int32(subset_high), max_x, max_y, station_coords_gpu, matrix_gpu, coords_gpu, forces_gpu, error_gpu, test1_gpu, test2_gpu, test3_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape, texrefs=[near_stations_texref, station_coords_texref, matrix_texref, testtexture_texref])    
         autoinit.context.synchronize()
         time.sleep(0.5)  # let the user interface catch up.
         
@@ -142,12 +203,12 @@ while (1) :
 
     if n_pass % IMAGES_EVERY == 0: # Make images of progress every N passes
     
-#        cuda.memcpy_dtoh(test, test1_gpu)
-#        print test
-#        cuda.memcpy_dtoh(test, test2_gpu)
-#        print test
-#        cuda.memcpy_dtoh(test, test3_gpu)
-#        print test
+        cuda.memcpy_dtoh(test, test1_gpu)
+        print test
+        cuda.memcpy_dtoh(test, test2_gpu)
+        print test
+        cuda.memcpy_dtoh(test, test3_gpu)
+        print test
         
         cuda.memcpy_dtoh(coords, forces_gpu)
         velocities = np.sqrt(np.sum(coords**2, axis = 1)).reshape(grid_dim) 
