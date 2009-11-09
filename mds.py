@@ -1,4 +1,4 @@
-#!/opt/local/bin/python
+#!/usb/bin/env python2.6
 
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
