@@ -2,9 +2,6 @@
 #define OBSTRUCTION       1.4
 #define WALK_SPEED        1.3
 #define INF               0x7f800000 
-#define DIM               DIMENSIONS_PYTHON
-#define N_NEARBY_STATIONS N_NEARBY_STATIONS_PYTHON
-#define N_STATIONS        N_STATIONS_PYTHON
 
 texture<int, 1, cudaReadModeElementType> tex_near_stations;
 texture<int, 2, cudaReadModeElementType> tex_station_coords;
@@ -26,18 +23,18 @@ __global__ void stations (int *glb_near_stations, int max_x, int max_y)
     int   ds_idx;
     float dist;
     
-    int   blk_near_idx [N_NEARBY_STATIONS];
-    float blk_near_dist[N_NEARBY_STATIONS];
+    int   blk_near_idx [@N_NEAR_STATIONS];
+    float blk_near_dist[@N_NEAR_STATIONS];
     
     if (x <  max_x && y < max_y) {     // Check that this thread is inside the map.
         int   slots_filled = 0;
         float max_dist = 0;
         int   max_slot;
-        for (ds_idx = 0; ds_idx < N_STATIONS; ds_idx++) {                               // For every station:
+        for (ds_idx = 0; ds_idx < @N_STATIONS; ds_idx++) {                               // For every station:
             ds_x = tex2D(tex_station_coords, ds_idx, 0);                                  // Get the station's geographic x coordinate. 
             ds_y = tex2D(tex_station_coords, ds_idx, 1);                                  // Get the station's geographic y coordinate.
             dist = sqrt( pow(float(ds_x - x), 2) + pow(float(ds_y - y), 2)) * 100;      // Find the geographic distance from the station to this texel.
-            if (slots_filled < N_NEARBY_STATIONS) {                                     // First, fill up all the nearby station slots, keeping track of the 'worst' station.
+            if (slots_filled < @N_NEAR_STATIONS) {                                     // First, fill up all the nearby station slots, keeping track of the 'worst' station.
                 blk_near_idx [slots_filled] = ds_idx;
                 blk_near_dist[slots_filled] = dist;
                 if (dist > max_dist) {
@@ -50,7 +47,7 @@ __global__ void stations (int *glb_near_stations, int max_x, int max_y)
                     blk_near_idx [max_slot] = ds_idx;
                     blk_near_dist[max_slot] = dist;
                     max_dist = 0;
-                    for (int slot = 0; slot < N_NEARBY_STATIONS; slot++) {              // Scan through the list to find the new worst.
+                    for (int slot = 0; slot < @N_NEAR_STATIONS; slot++) {              // Scan through the list to find the new worst.
                         if (blk_near_dist[slot] > max_dist) {
                             max_dist = blk_near_dist[slot];
                             max_slot = slot;
@@ -59,9 +56,9 @@ __global__ void stations (int *glb_near_stations, int max_x, int max_y)
                 }
             }
         } 
-        int *p = glb_near_stations + (x * max_y + y) * N_NEARBY_STATIONS * 2;
+        int *p = glb_near_stations + (x * max_y + y) * @N_NEAR_STATIONS * 2;
         // should index the pointer or increment? constant array subscripts in unrolled loop would be better.
-        for (int i = 0; i < N_NEARBY_STATIONS; i++) {                                   
+        for (int i = 0; i < @N_NEAR_STATIONS; i++) {                                   
             *(p++) = blk_near_idx[i];                                                   
             *(p++) = int(blk_near_dist[i]);
         }
@@ -76,7 +73,7 @@ __global__ void stations (int *glb_near_stations, int max_x, int max_y)
  */
  
 __global__ void forces (
-    int   n_stations,
+    int   n_stations, //replace with constant
     int   s_low,
     int   s_high,
     int   max_x,
@@ -88,9 +85,9 @@ __global__ void forces (
     int   *debug,
     float *debug_img)
 {
-    float coord [DIM];
-    float vector[DIM];
-    float force [DIM]; 
+    float coord [@DIM];
+    float vector[@DIM];
+    float force [@DIM]; 
     float *glb_coord;
     float *glb_error;
     float *glb_force;
@@ -103,52 +100,49 @@ __global__ void forces (
     float tt;
     float weight = 0;
     float weight_here;
-    int   d;
     int   x = blockIdx.x * blockDim.x + threadIdx.x; 
     int   y = blockIdx.y * blockDim.y + threadIdx.y; 
     int   os_x, os_y, os_idx;
     
-    float blk_origin_coord [DIM];
-    float blk_near_dist[N_NEARBY_STATIONS];  // Dist from this texel to the destination station  
-    int   blk_near_idx [N_NEARBY_STATIONS];
+    float blk_origin_coord [@DIM];
+    float blk_near_dist[@N_NEAR_STATIONS];  // Dist from this texel to the destination station  
+    int   blk_near_idx [@N_NEAR_STATIONS];
        
-    // if (isnan(glb_coords[(x * max_y + y) * DIM])) return; // should kill off useless threads, but also those that should be loading shared memory. shared mem should be exchanged for registers anyway.
+    // if (isnan(glb_coords[(x * max_y + y) * @DIM])) return; // should kill off useless threads, but also those that should be loading shared memory. shared mem should be exchanged for registers anyway.
                                                              // actually, it doesn't help. memory accesses must be really slow. calculation is faster.
                                                              
     // when changing code, I see slight differences in the evolution of error images - this is probably due to random initial configuration of points.
     if ( x < max_x && y < max_y ) {          // Check that this thread is inside the map.
-        #pragma unroll N_NEARBY_STATIONS_PYTHON
-        for (int i = 0; i < N_NEARBY_STATIONS; i++) {
-            blk_near_idx  [i] = tex1Dfetch(tex_near_stations, (x * max_y + y) * N_NEARBY_STATIONS * 2 + i * 2 + 0);
-            blk_near_dist [i] = tex1Dfetch(tex_near_stations, (x * max_y + y) * N_NEARBY_STATIONS * 2 + i * 2 + 1);
-        }
-        glb_coord = &( glb_coords[(x * max_y + y) * DIM] );                             // Make a pointer to this texel's time-space coordinate in global memory.
-        #pragma unroll DIMENSIONS_PYTHON
-        for (d = 0; d < DIM; d++) coord[d] = glb_coord[d];                              // Copy the time-space coordinate for this texel from global to local memory.
-        #pragma unroll DIMENSIONS_PYTHON
-        for (d = 0; d < DIM; d++) force[d] = 0;                                         // Initialize this timestep's force to 0. (Do this before calculating forces, outside the loops!)
+        @unroll @N_NEAR_STATIONS
+        blk_near_idx  [@I] = tex1Dfetch(tex_near_stations, (x * max_y + y) * @N_NEAR_STATIONS * 2 + @I * 2 + 0);
+        @unroll @N_NEAR_STATIONS
+        blk_near_dist [@I] = tex1Dfetch(tex_near_stations, (x * max_y + y) * @N_NEAR_STATIONS * 2 + @I * 2 + 1);
+        
+        glb_coord = &( glb_coords[(x * max_y + y) * @DIM] );                             // Make a pointer to this texel's time-space coordinate in global memory.
+        @unroll @DIM
+        coord[@I] = glb_coord[@I];                              // Copy the time-space coordinate for this texel from global to local memory.
+        @unroll @DIM
+        force[@I] = 0;                                         // Initialize this timestep's force to 0. (Do this before calculating forces, outside the loops!)
         for (os_idx = s_low; os_idx < s_high; os_idx++) {                               // For every origin station:
             os_x = tex2D(tex_station_coords, os_idx, 0);                            // Get the origin station's geographic x coordinate.
             os_y = tex2D(tex_station_coords, os_idx, 1);                            // Get the origin station's geographic y coordinate.
-            float *glb_origin_coord = &(glb_coords[(os_x*max_y + os_y) * DIM]);     // Make a pointer to the gobal time-space coordinates for this origin station.
-            #pragma unroll DIMENSIONS_PYTHON
-            for (d = 0; d < DIM; d++)                        
-                blk_origin_coord[d] = glb_origin_coord[d];                          // Copy origin time-space coordinates from global to block-shared memory. Maybe it should be in register.
+            float *glb_origin_coord = &(glb_coords[(os_x*max_y + os_y) * @DIM]);     // Make a pointer to the gobal time-space coordinates for this origin station.
+            @unroll @DIM
+            blk_origin_coord[@I] = glb_origin_coord[@I];                          // Copy origin time-space coordinates from global to block-shared memory. Maybe it should be in register.
             tt = INF;                                                                   // Set the current best travel time to +infinity.
             // Using manhattan distance does not noticeably speed up computation. 
             // Global memory is the bottleneck, so computation is better than a lookup table.
             // Is it OK to unroll long loops, like the nearby stations code, as below?
             // might matrix times be flipped, depending on element ordering conventions?
-            #pragma unroll N_NEARBY_STATIONS_PYTHON
-            for (int i = 0; i < N_NEARBY_STATIONS; i++) {                               // For every destination station in this block's nearby stations list:
-                tt = min(tt, blk_near_dist[i] * OBSTRUCTION / WALK_SPEED + tex2D(tex_matrix, os_idx, blk_near_idx[i])); 
-            }                                                                           // We could also use the destination station to texel distance to make additional forces.
+            
+            @unroll @N_NEAR_STATIONS
+            tt = min(tt, blk_near_dist[@I] * OBSTRUCTION / WALK_SPEED + tex2D(tex_matrix, os_idx, blk_near_idx[@I])); 
+
             norm = 0; // Init here, just before accumulation in inner loop
-            #pragma unroll DIMENSIONS_PYTHON
-            for (d = 0; d < DIM; d++) {
-                vector[d] = coord[d] - blk_origin_coord[d];                             // Find the vector from the origin station to this texel in time-space.
-                norm     += pow(vector[d], 2);                                          // Accumulate terms to find the norm.
-            }
+
+            @unroll @DIM
+            vector[@I] = coord[@I] - blk_origin_coord[@I]; norm += pow(vector[@I], 2);                             // Find the vector from the origin station to this texel in time-space.
+                                                                                                 // Accumulate terms to find the norm.
             norm   = sqrt(norm);                                                        // Take the square root to find the norm, i.e. the distance in time-space.
             adjust = tt - norm ;                                                        // How much would the point need to move to match the best travel time?
             // global influence cutoff above T minutes
@@ -160,10 +154,9 @@ __global__ void forces (
             weight += weight_here;
                                                                                                                                                                                                                                                                                                                             // use __isnan() ? anyway, this is in the outer loop, and should almost never diverge within a warp.                                                                                                 
             if (norm != 0) {       
-                #pragma unroll DIMENSIONS_PYTHON                                          // Avoid propagating nans through division by zero. Force should be 0, so add skip this step / add nothing.
-                for (d = 0; d < DIM; d++) 
-                    force[d] += ((vector[d] / norm) * adjust * weight_here);            // Find a unit vector, scale it by the desired 'correct' time-space distance. (weighted)
-                // why is this in the loop?
+                @unroll @DIM                                          // Avoid propagating nans through division by zero. Force should be 0, so add skip this step / add nothing.
+                force[@I] += ((vector[@I] / norm) * adjust * weight_here);            // Find a unit vector, scale it by the desired 'correct' time-space distance. (weighted)
+                // why is this in the if block?
                 error_here = abs(adjust) * weight_here;                                    // Accumulate error to each texel, so we can observe progress as the program runs. (weighted)
                 error += error_here;
                 error_max = max(error_max, error_here);
@@ -181,19 +174,19 @@ __global__ void forces (
         // some points will move before others finish (or even start) calculating.
         // Therefore integration has been split off into another kernel to allow global, device-level thread synchronization.
 
-        glb_force  = glb_forces  + (x * max_y + y) * DIM;     // Make a pointer to a force record in global memory. You could do this with C array notation
+        glb_force  = glb_forces  + (x * max_y + y) * @DIM;     // Make a pointer to a force record in global memory. You could do this with C array notation
         glb_error  = glb_errors  + (x * max_y + y)      ;     // Make a pointer to an error record in global memory.
         glb_weight = glb_weights + (x * max_y + y)      ;     // Make a pointer to an error record in global memory.
         if (s_low > 0) {
-            #pragma unroll DIMENSIONS_PYTHON
-            for (d = 0; d < DIM; d++) force[d] += glb_force[d];     // ADD Output forces to device global memory.
+            @unroll @DIM
+            force[@I] += glb_force[@I];     // ADD Output forces to device global memory.
             error  += *glb_error;
             weight += *glb_weight;
             // visualize max error per cell
             error_max = max(error_max, debug_img[ x * max_y + y ]);
         }
-        #pragma unroll DIMENSIONS_PYTHON
-        for (d = 0; d < DIM; d++) glb_force[d]  = force[d];     // SET Output forces to device global memory.
+        @unroll @DIM
+        glb_force[@I]  = force[@I];     // SET Output forces to device global memory.
         *glb_error  = error;                                     // SET Output this texel's cumulative error to device global memory.
         *glb_weight = weight;                                     // SET Output this texel's cumulative error to device global memory.
         debug_img[ x * max_y + y ] = error_max;
@@ -221,10 +214,10 @@ __global__ void integrate (
     int   x = blockIdx.x * blockDim.x + threadIdx.x; 
     int   y = blockIdx.y * blockDim.y + threadIdx.y; 
     if ( x < max_x && y < max_y ) {                              // Check that this thread is inside the map
-        glb_coord  = &( glb_coords [(x * max_y + y) * DIM] );    // Make a pointer to time-space coordinates in global memory
-        glb_force  = &( glb_forces [(x * max_y + y) * DIM] );    // Make a pointer to forces in global memory
+        glb_coord  = &( glb_coords [(x * max_y + y) * @DIM] );    // Make a pointer to time-space coordinates in global memory
+        glb_force  = &( glb_forces [(x * max_y + y) * @DIM] );    // Make a pointer to forces in global memory
         glb_weight = &( glb_weights[(x * max_y + y)      ] );    // Make a pointer to forces in global memory
-        for (d = 0; d < DIM; d++) glb_force[d] /= *glb_weight;    // Scale forces by the sum of all weights acting on this cell
-        for (d = 0; d < DIM; d++) glb_coord[d] += glb_force [d]; // Euler integration, 1 timestep
+        for (d = 0; d < @DIM; d++) glb_force[d] /= *glb_weight;    // Scale forces by the sum of all weights acting on this cell
+        for (d = 0; d < @DIM; d++) glb_coord[d] += glb_force [d]; // Euler integration, 1 timestep
     }
 }

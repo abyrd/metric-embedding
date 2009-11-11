@@ -98,6 +98,29 @@ def numpy2qimage(data):
 #---------------------------------------------------------------------------
 
 
+def preprocess_cu(filename, replacements) :
+    src = open(filename).read()
+    for f, r in replacements : src = src.replace('@'+str(f), str(r))
+    src = src.split('\n')
+    l = 0
+    while (l < len(src)) :
+        fields = src[l].split()
+        if len(fields) > 0 and fields[0] == '@unroll' :
+            n = int(fields[1])
+            src.pop(l)
+            assert n > 0
+            template = src.pop(l)
+            for i in range(n) :
+                src.insert(l, template.replace('@I', str(i)))
+            src.insert(l, '// LOOP UNROLLED')
+        l += 1
+        
+    return '\n'.join(src)
+    
+    
+#---------------------------------------------------------------------------
+    
+
 # Best to put a multiple of 32 threads in a block. For square blocks, this means 8x8 or 16x16. 8x8 is actually much faster on BART! 
 CUDA_BLOCK_SHAPE = (8, 8, 1) 
 
@@ -204,10 +227,11 @@ class MDSThread(QtCore.QThread) :
         # times could be merged into forces kernel, if done by pixel not station.
         # integrate kernel could be GPUArray operation; also helps clean up code by using GPUArrays.
         # DIM should be replaced by python script, so as not to define twice. 
-        src = open("unified_mds.cu").read()
-        src = src.replace( 'N_NEARBY_STATIONS_PYTHON', str(self.N_NEARBY_STATIONS) )
-        src = src.replace( 'N_STATIONS_PYTHON', str(n_stations) )
-        src = src.replace( 'DIMENSIONS_PYTHON', str(self.DIMENSIONS) )
+
+        replacements = [( 'N_NEAR_STATIONS', self.N_NEARBY_STATIONS ),
+                        ( 'N_STATIONS',      n_stations ),
+                        ( 'DIM',             self.DIMENSIONS)]
+        src = preprocess_cu('unified_mds.cu', replacements)
         #print src
         mod = SourceModule(src, options=["--ptxas-options=-v"])
         stations_kernel  = mod.get_function("stations"  )
