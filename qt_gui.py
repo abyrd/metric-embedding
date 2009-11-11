@@ -18,9 +18,9 @@ class LaunchWindow(QtGui.QWidget):
         self.mainLayout = QtGui.QGridLayout()
         self.setLayout(self.mainLayout)
 
-        self.errGraphWidget = GraphWidget('AVERAGE ABSOLUTE ERROR (MINUTES) / WHITE=30')
+        self.errGraphWidget = GraphWidget('AVERAGE ABSOLUTE ERROR (RED = 30 MINUTES)')
 
-        self.velGraphWidget = GraphWidget('POINT VELOCITY (SEC/TIMESTEP) / WHITE=60')
+        self.velGraphWidget = GraphWidget('POINT VELOCITY (RED = 60 SEC/TIMESTEP)')
 
         # thread will send signals to its parent, so tell it self instead of app
         self.mdsThread = qt_mds.MDSThread(self)

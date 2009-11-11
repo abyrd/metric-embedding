@@ -36,9 +36,6 @@ for i in range(256) :
     else : r = 0
     COLOR_COLORTABLE.append(QtGui.QColor(r, g, b).rgb())
 
-for c in COLOR_COLORTABLE :
-    print str(c)
-    
 def numpy2qimage(data):
     '''Convert a numpy array into a QImage'''
 
@@ -194,11 +191,11 @@ class MDSThread(QtCore.QThread) :
 
         # set up arrays for calculations
 
-        coords_gpu = gpuarray.to_gpu(np.random.random( (max_x, max_y, self.DIMENSIONS) ).astype(np.float32))   # initialize coordinates to random values in range 0...1
-        forces_gpu = gpuarray.zeros( (int(max_x), int(max_y), self.DIMENSIONS), dtype=np.float32 )             # 3D float32 accumulate forces over one timestep
-        weights_gpu = gpuarray.zeros( (int(max_x), int(max_y)),             dtype=np.float32 )             # 2D float32 cell error accumulation
-        errors_gpu = gpuarray.zeros( (int(max_x), int(max_y)),             dtype=np.float32 )             # 2D float32 cell error accumulation
-        near_stations_gpu = gpuarray.zeros( (cuda_grid_shape[0], cuda_grid_shape[1], self.N_NEARBY_STATIONS), dtype=np.int32)
+        coords_gpu        = gpuarray.to_gpu(np.random.random( (max_x, max_y, self.DIMENSIONS) ).astype(np.float32))   # initialize coordinates to random values in range 0...1
+        forces_gpu        = gpuarray.zeros( (int(max_x), int(max_y), self.DIMENSIONS), dtype=np.float32 )             # 3D float32 accumulate forces over one timestep
+        weights_gpu       = gpuarray.zeros( (int(max_x), int(max_y)),                  dtype=np.float32 )             # 2D float32 cell error accumulation
+        errors_gpu        = gpuarray.zeros( (int(max_x), int(max_y)),                  dtype=np.float32 )             # 2D float32 cell error accumulation
+        near_stations_gpu = gpuarray.zeros( (int(max_x), int(max_y), self.N_NEARBY_STATIONS, 2), dtype=np.int32)
 
         debug_gpu     = gpuarray.zeros( n_gridpoints, dtype = np.int32 )
         debug_img_gpu = gpuarray.zeros_like( errors_gpu )
@@ -227,12 +224,15 @@ class MDSThread(QtCore.QThread) :
         near_stations_gpu.bind_to_texref_ext(near_stations_texref)
 
         # note, cuda.In and cuda.Out are from the perspective of the KERNEL not the host app!
-        stations_kernel(near_stations_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
+        stations_kernel(near_stations_gpu, max_x, max_y, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
         # autoinit.context.synchronize()
         cuda_context.synchronize()
         
         #print "Near stations list:"
         #print near_stations_gpu
+        
+        #sys.exit()
+        
         print "\n----CALCULATION----"
         t_start = time.time()
         n_pass = 0
