@@ -1,14 +1,10 @@
 #!/usr/bin/env python2.6
-#
-#
 
 import numpy as np
 import time
 
 import pycuda.driver as cuda
 from PyQt4 import QtCore, QtGui
-
-from PIL import Image
 
 #import prep
 import qt_mds
@@ -22,16 +18,17 @@ class LaunchWindow(QtGui.QWidget):
         self.mainLayout = QtGui.QGridLayout()
         self.setLayout(self.mainLayout)
 
-        self.graphWidget = GraphWidget()
-        self.graphWidget.setGeometry(400, 200, 400, 400)
-        self.graphWidget.show()
+        self.errGraphWidget = GraphWidget('AVERAGE ABSOLUTE ERROR (MINUTES) / WHITE=30')
+
+        self.velGraphWidget = GraphWidget('POINT VELOCITY (SEC/TIMESTEP) / WHITE=60')
 
         # thread will send signals to its parent, so tell it self instead of app
         self.mdsThread = qt_mds.MDSThread(self)
         self.connect(self.mdsThread, QtCore.SIGNAL("finished()"), self.resetUI)
         self.connect(self.mdsThread, QtCore.SIGNAL("terminated()"), self.resetUI)
         self.connect(self.mdsThread, QtCore.SIGNAL("outputProgress(int, int, int, float, float)"), self.updateProgress)
-        self.connect(self.mdsThread, QtCore.SIGNAL("outputImage(QString)"), self.displayGraph)
+        #self.connect(self.mdsThread, QtCore.SIGNAL("outputImage(QString)"), self.displayGraph)
+        self.connect(self.mdsThread, QtCore.SIGNAL("outputImage(QImage, QImage)"), self.showImages)
         
         self.lytRow = 0   
         self.filenameButton = QtGui.QPushButton('Choose File')
@@ -129,16 +126,24 @@ class LaunchWindow(QtGui.QWidget):
 
     def displayGraph(self, filename) :
         self.graphWidget.showImageFile(filename)
-        
+
+    def showImages(self, errImage, velImage) :
+        self.errGraphWidget.showImage(errImage)
+        self.velGraphWidget.showImage(velImage)
 
 class GraphWidget(QtGui.QLabel):
-    def __init__(self):
+    def __init__(self, title = 'Give me a name!'):
         super(GraphWidget, self).__init__()        
-        self.setWindowTitle('GPU MDS Algorithm')
-        self.setPixmap(QtGui.QPixmap())
+        self.setWindowTitle(title)
+        self.setGeometry(600, 200, 400, 400)
+        self.show()
                
     def showImageFile(self, filename) :
         self.setPixmap(QtGui.QPixmap(filename))
+        self.resize(self.pixmap().size())
+
+    def showImage(self, image) :
+        self.setPixmap(QtGui.QPixmap().fromImage(image))
         self.resize(self.pixmap().size())
         
 if __name__ == '__main__':
