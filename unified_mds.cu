@@ -192,7 +192,9 @@ __global__ void forces (
             // global influence cutoff above T minutes
             // if (tt > 60 * 100) adjust = 0;
             // global influence scaling like gravity, relative to tt - scale adjustment according to travel time to point
-            weight_here = (tt < 120*60) * (1 - 1 / (120*60 - (tt-1)));
+            // turn off weighting
+            // weight_here = (tt < 120*60) * (1 - 1 / (120*60 - (tt-1)));
+            weight_here = 1;
             weight += weight_here;
                                                                                                                                                                                                                                                                                                                             // use __isnan() ? anyway, this is in the outer loop, and should almost never diverge within a warp.                                                                                                 
             if (norm != 0) {                                                            // Avoid propagating nans through division by zero. Force should be 0, so add skip this step / add nothing.
