@@ -128,7 +128,10 @@ class MDSThread(QtCore.QThread) :
     def __init__(self, parent = None) :
         QtCore.QThread.__init__(self, parent)
         self.exiting = False
-    
+        cuda.init()
+        self.cuda_dev = cuda.Device(0)
+        self.cuda_context = self.cuda_dev.make_context()
+
     def calculate (self, filename, dimensions, n_iterations, images_every, chunk_size, list_size, debug) :
         self.MATRIX_FILE = filename
         self.DIMENSIONS = dimensions
@@ -140,9 +143,7 @@ class MDSThread(QtCore.QThread) :
         self.start()
          
     def run (self) :
-        cuda_dev = cuda.Device(0)
-        cuda_context = cuda_dev.make_context()
-
+        
         print 'Loading matrix...'
         npz = np.load(self.MATRIX_FILE)
         station_coords = npz['station_coords']
@@ -250,7 +251,7 @@ class MDSThread(QtCore.QThread) :
         # note, cuda.In and cuda.Out are from the perspective of the KERNEL not the host app!
         stations_kernel(near_stations_gpu, max_x, max_y, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
         # autoinit.context.synchronize()
-        cuda_context.synchronize()
+        self.cuda_context.synchronize()
         
         #print "Near stations list:"
         #print near_stations_gpu
@@ -279,7 +280,7 @@ class MDSThread(QtCore.QThread) :
 
                 forces_kernel(np.int32(n_stations), np.int32(subset_low), np.int32(subset_high), max_x, max_y, coords_gpu, forces_gpu, weights_gpu, errors_gpu, debug_gpu, debug_img_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)
                 #autoinit.context.synchronize()
-                cuda_context.synchronize()
+                self.cuda_context.synchronize()
                 
                 #print coords_gpu.get()[200:210,200:210]
                 #print forces_gpu.get()[200:210,200:210]
@@ -294,7 +295,7 @@ class MDSThread(QtCore.QThread) :
 
                 integrate_kernel(max_x, max_y, coords_gpu, forces_gpu, weights_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
                 #autoinit.context.synchronize()
-                cuda_context.synchronize()
+                self.cuda_context.synchronize()
 
             print self.IMAGES_EVERY
             if (self.IMAGES_EVERY > 0) and (n_pass % self.IMAGES_EVERY == 0) :
@@ -329,7 +330,7 @@ class MDSThread(QtCore.QThread) :
                 np.clip(velocities, 0, 255, velocities)  
                 velImage = numpy2qimage(velocities.astype(np.uint8))
                 
-                errors = errors_gpu.get() / weights_gpu.get() 
+                errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
                 errors /= 60.0 
                 errors /= 30
                 errors *= 255
@@ -343,4 +344,5 @@ class MDSThread(QtCore.QThread) :
 
         #end of main loop
         np.save('result.npy', coords_gpu.get())
+        cuda_context.pop() # have to pop context after copying results
         

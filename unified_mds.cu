@@ -7,7 +7,7 @@ texture<int, 1, cudaReadModeElementType> tex_near_stations;
 texture<int, 2, cudaReadModeElementType> tex_station_coords;
 texture<int, 2, cudaReadModeElementType> tex_matrix;
 
-
+// preprocess to replace blockDim.x/y
 
 /*
  *  [ stations kernel ]
@@ -56,6 +56,12 @@ __global__ void stations (int *glb_near_stations, int max_x, int max_y)
                 }
             }
         } 
+        
+        // mark this cell for uselessness
+        float min_dist = INF;
+        for (int i = 0; i < @N_NEAR_STATIONS; i++) min_dist = min(min_dist, blk_near_dist[i]);
+        if (min_dist > 2000) blk_near_idx[0] = -1;
+
         int *p = glb_near_stations + (x * max_y + y) * @N_NEAR_STATIONS * 2;
         // should index the pointer or increment? constant array subscripts in unrolled loop would be better.
         for (int i = 0; i < @N_NEAR_STATIONS; i++) {                                   
@@ -108,13 +114,14 @@ __global__ void forces (
     float blk_near_dist[@N_NEAR_STATIONS];  // Dist from this texel to the destination station  
     int   blk_near_idx [@N_NEAR_STATIONS];
        
-    // if (isnan(glb_coords[(x * max_y + y) * @DIM])) return; // should kill off useless threads, but also those that should be loading shared memory. shared mem should be exchanged for registers anyway.
+    if (isnan(glb_coords[(x * max_y + y) * @DIM])) return; // should kill off useless threads, but also those that should be loading shared memory. shared mem should be exchanged for registers anyway.
                                                              // actually, it doesn't help. memory accesses must be really slow. calculation is faster.
                                                              
     // when changing code, I see slight differences in the evolution of error images - this is probably due to random initial configuration of points.
     if ( x < max_x && y < max_y ) {          // Check that this thread is inside the map.
         @unroll @N_NEAR_STATIONS
         blk_near_idx  [@I] = tex1Dfetch(tex_near_stations, (x * max_y + y) * @N_NEAR_STATIONS * 2 + @I * 2 + 0);
+        if (blk_near_idx[0] == -1) return; // this cell was marked useless because it is too far from transit        
         @unroll @N_NEAR_STATIONS
         blk_near_dist [@I] = tex1Dfetch(tex_near_stations, (x * max_y + y) * @N_NEAR_STATIONS * 2 + @I * 2 + 1);
         
@@ -145,20 +152,21 @@ __global__ void forces (
                                                                                                  // Accumulate terms to find the norm.
             norm   = sqrt(norm);                                                        // Take the square root to find the norm, i.e. the distance in time-space.
             adjust = tt - norm ;                                                        // How much would the point need to move to match the best travel time?
-            // global influence cutoff above T minutes
-            // if (tt > 60 * 100) weight_here = 0;
             // global influence scaling like gravity, relative to tt - scale adjustment according to travel time to point
             // weight_here = (tt < 120*60) * (1 - 1 / (120*60 - (tt-1)));
             // turn off weighting
             weight_here = 1;
+            // global influence cutoff above T minutes
+            // if (tt > 60 * 250) weight_here = 0; else weight_here = 1;
+            // weight_here = 1 / (tt + 1);
             weight += weight_here;
                                                                                                                                                                                                                                                                                                                             // use __isnan() ? anyway, this is in the outer loop, and should almost never diverge within a warp.                                                                                                 
             if (norm != 0) {       
                 @unroll @DIM                                          // Avoid propagating nans through division by zero. Force should be 0, so add skip this step / add nothing.
                 force[@I] += ((vector[@I] / norm) * adjust * weight_here);            // Find a unit vector, scale it by the desired 'correct' time-space distance. (weighted)
                 // why is this in the if block?
-                error_here = abs(adjust) * weight_here;                                    // Accumulate error to each texel, so we can observe progress as the program runs. (weighted)
-                error += error_here;
+                error_here = pow(abs(adjust) * weight_here, 2);                                    // Accumulate error to each texel, so we can observe progress as the program runs. (weighted)
+                error += error_here;                                        // now using rms error - should weight be inside or outside square? for now it's always 1.
                 error_max = max(error_max, error_here);
             }
                         
