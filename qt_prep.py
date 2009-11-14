@@ -105,12 +105,38 @@ class MakeMatrixThread(QtCore.QThread) :
         #    coord = 
         #    mask = station_coords != station_coords[i]
         #    station_coords = station_coords[mask]
+        self.emit( QtCore.SIGNAL( 'say(QString)' ), QtCore.QString( 'Eliminating equivalent stations...' ) )
+        station_labels = np.array(station_labels)
+        station_coords_new = []
+        station_labels_new = []
+        while len(station_coords) > 0 :
+            coord = np.round(station_coords[0])
+            minIdx = np.argmin(np.sum(np.abs(station_coords - coord), axis=1))
+            station_labels_new.append(station_labels[minIdx])
+            station_coords_new.append(station_coords[minIdx])
+            mask = np.any(np.round(station_coords) != coord, axis=1)
+            #print mask
+            print len(station_coords)
+            print coord
+            print station_coords[np.logical_not(mask)]
+            station_coords = station_coords[mask][:]
+            station_labels = station_labels[mask][:]
+            self.emit( QtCore.SIGNAL( 'progress(int, int)' ), n_stations - len(station_coords_new), n_stations )
+        
+        station_labels = station_labels_new
+        station_coords = station_coords_new
+        station_vertices = [g.get_vertex(slabel) for slabel in station_labels_new]
+        n_stations = len(station_labels)
+        print len(station_labels), len(station_coords), len(station_vertices)
         
         print "Making OD matrix..."
         t0 = 1253800000
         matrix     = zeros( (n_stations, n_stations), dtype=float ) #dtype could be uint16 except that there are inf's ---- why?
         colortable = [QtGui.QColor(i, i, i).rgb() for i in range(256)]
         colortable[255] = QtGui.QColor(255, 50, 50).rgb()  
+        matrixImage = QtGui.QImage(max_x, max_y, QtGui.QImage.Format_Indexed8)
+        matrixImage.fill(0)
+        matrixImage.setColorTable(colortable)
         for origin_idx in range(n_stations) :
             sys.stdout.write( "\rProcessing %i / %i ..." % (origin_idx, n_stations) )
             sys.stdout.flush()
@@ -119,9 +145,6 @@ class MakeMatrixThread(QtCore.QThread) :
                         
             origin_label = station_labels[origin_idx]
             g.spt_in_place(origin_label, None, State(1, t0))
-            matrixImage = QtGui.QImage(max_x, max_y, QtGui.QImage.Format_Indexed8)
-            matrixImage.fill(0)
-            matrixImage.setColorTable(colortable)
             for dest_idx in range(n_stations) :
                 dest_vertex = station_vertices[dest_idx]
                 # first board time should be subtracted here
@@ -136,9 +159,10 @@ class MakeMatrixThread(QtCore.QThread) :
                     delta_t = 0
                 
                 matrix[origin_idx, dest_idx] = delta_t
-                color = 254 - delta_t * 4 / 60
-                if color < 0 : color = 0
-                if delta_t < 5 : color = 255
+                if dest_idx < origin_idx : color = 255
+                else :
+                    color = 254 - delta_t * 4 / 60
+                    if color < 0 : color = 0
                 coord = station_coords[dest_idx]
                 x = coord[0]
                 y = coord[1]

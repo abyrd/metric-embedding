@@ -128,10 +128,7 @@ class MDSThread(QtCore.QThread) :
     def __init__(self, parent = None) :
         QtCore.QThread.__init__(self, parent)
         self.exiting = False
-        cuda.init()
-        self.cuda_dev = cuda.Device(0)
-        self.cuda_context = self.cuda_dev.make_context()
-
+        
     def calculate (self, filename, dimensions, n_iterations, images_every, chunk_size, list_size, debug) :
         self.MATRIX_FILE = filename
         self.DIMENSIONS = dimensions
@@ -143,7 +140,10 @@ class MDSThread(QtCore.QThread) :
         self.start()
          
     def run (self) :
-        
+        cuda.init()
+        self.cuda_dev = cuda.Device(0)
+        self.cuda_context = self.cuda_dev.make_context()
+
         print 'Loading matrix...'
         npz = np.load(self.MATRIX_FILE)
         station_coords = npz['station_coords']
