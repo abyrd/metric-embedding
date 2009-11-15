@@ -104,7 +104,7 @@ import pycuda.gpuarray as gpuarray
 from   pycuda.compiler import SourceModule
 
 # Best to put a multiple of 32 threads (1 warp) in a block. Multiples of 64 schedule better.
-CUDA_BLOCK_SHAPE = (8, 8, 1) 
+CUDA_BLOCK_SHAPE = (64, 1, 1) 
 #GSDB_FILENAME    = '../gsdata/bart.linked.gsdb'
 GSDB_FILENAME    = '../gsdata/trimet_13sep2009.linked.gsdb'
 
@@ -114,36 +114,39 @@ def from_gsdb(gsdb) :
     V  = np.empty( nV, dtype=np.int32   )
     E  = np.empty( nE, dtype=np.int32   )
     W  = np.empty( nE, dtype=np.float32 )
-    D  = np.zeros( nV, dtype=np.int32   )
 
     print 'Indexing edges...'
     gsdb.execute("CREATE INDEX IF NOT EXISTS edges_vertex1 ON edges (vertex1)")
     print 'Building vertex hash...'
-    vdict = dict( (e[1], e[0]) for e in enumerate(gsdb.all_vertex_labels()) )
-    print vdict
+    v_idx = dict( zip(gsdb.all_vertex_labels(), range(nV)) )
+    v_tbl = [[] for e in range(nV)] 
     print 'Fetching incoming edges... '
     # original was designed for undirected graphs.
     # also : alignment, textures, broadcasting/packing, calendars, and paths should be worked on.
     # Atomic min to global memory instead of 2 kernels. This should improve cache use. Or even load into registers.
     # seems to go very slow when ordering by vertex2 not vertex1
-    edges = gsdb.execute("SELECT vertex1, vertex2, edgetype, edgestate FROM edges ORDER BY vertex1")
+    edges = gsdb.all_edges()
     iE = 0
-    last_label = None
-    for vo_label, vd_label, edgetype, edgestate in edges :
-        if vd_label != last_label : 
-            V[ vdict[vd_label] ] = iE
-            if last_label is not None : D[ vdict[last_label] ] = iE - vdict[last_label]
-            last_label = vd_label
-        E[iE] = vdict[vo_label]
-        edgetype  = cPickle.loads( str(edgetype ) )
-        edgestate = cPickle.loads( str(edgestate) )
-        edge = edgetype.reconstitute(edgestate, gsdb)
-        W[iE] = 10  
+    for vo_label, vd_label, edge in edges :
+        v_tbl[v_idx[vo_label]].append(v_idx[vd_label])
         iE += 1
         if iE % 10000 == 0 :
             sys.stdout.write('\rProcessing edge %i / %i (%02i%%)' % (iE, nE, iE * 100. / nE))
             sys.stdout.flush()
+        
+    print 'Making ndarray edgelist representation... '
+    iE = 0
+    for iV in range(nV) :
+        V[iV] = iE
+        for e in v_tbl[iV] :
+            E[iE] = e
+            W[iE] = 1 # must be filled in...
+            iE += 1            
                 
+    print V
+    print E
+    print W
+    
     print '\nSaving in numpy gzipped format...'
     np.savez( 'edgelist.npz', V=V, E=E, W=W)
     return (V, E, W)
@@ -152,29 +155,45 @@ src = """
 // should use texture references for read-only parameters, allows caching
 // could also arrange vertices for spatial locality
 
+#define INF 0x7f800000 
+
 texture<int, 1, cudaReadModeElementType> tV;
 texture<int, 1, cudaReadModeElementType> tE;
 texture<int, 1, cudaReadModeElementType> tW;
 
-__global__ __device__ SSSP1 ( int *V, int *E, float *W, int *M, float *C, float *U ) 
+__global__ void init ( int *M, float *C, float *U, int S ) 
 {
-    int tid = blockId.x * blockDim.x + threadId.x;
-    int e_offset   = V[tid]
-    int n_incoming = V[tid + 1] - e_offset // does not work yet, need to order data better
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid == S) {
+        M[tid] = 1;
+        C[tid] = 0;
+        U[tid] = 0;
+    } else {
+        M[tid] = 0;
+        C[tid] = INF;
+        U[tid] = INF;
+    }
+}
+
+__global__ void SSSP1 ( int *V, int *E, float *W, int *M, float *C, float *U ) 
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int e_off = V[tid];
+    int e_len = V[tid + 1] - e_off;
     if (M[tid]) { 
         M[tid] = 0;
-        for (int i=0; i<n_incoming; i++) { 
-             int nid = E[e_offset + i]
-             if (U[nid] > C[tid] + W[nid]) { 
-                 U[nid] = C[tid] + W[nid];
+        for (int i = 0; i < e_len; i++) { 
+             int nid = E[e_off + i];
+             if (U[nid] > C[tid] + W[e_off + i]) { 
+                 U[nid] = C[tid] + W[e_off + i];
              } 
         }
     } 
 }
 
-__global__ __device__ SSSP2 ( int *V, int *E, float *W, int *M, float *C, float *U ) 
+__global__ void SSSP2 ( int *V, int *E, float *W, int *M, float *C, float *U ) 
 {
-    tid = getThreadID 
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (C[tid] > U[tid]) { 
         C[tid] = U[tid]; 
         M[tid] = 1; 
@@ -184,32 +203,42 @@ __global__ __device__ SSSP2 ( int *V, int *E, float *W, int *M, float *C, float 
 """
 
 gsdb = GraphDatabase(GSDB_FILENAME)
-V, E, W = from_gsdb(gsdb)
+# V, E, W = from_gsdb(gsdb)
+npz = np.load( 'edgelist.npz' )
+V = npz['V']
+E = npz['E']
+W = npz['W']
 V = gpuarray.to_gpu(V)        
 E = gpuarray.to_gpu(E)
 W = gpuarray.to_gpu(W)
 
-M = gpuarray.zeros(V.shape, dtype=np.int32)
-C = gpuarray.empty(V.shape, dtype=np.float32)
-C.fill(np.inf)
-U = gpuarray.empty(V.shape, dtype=np.float32)
-U.fill(np.inf)
-
-M[S] = 1 
-C[S] = 0 # t_start 
-U[S] = 0 # t_start
+M = gpuarray.zeros(V.shape, dtype=np.int32) # necessary to fill with 0 for now, since edges of blocks are not handled.
+C = gpuarray.empty(V.shape, dtype=np.float32) 
+U = gpuarray.empty(V.shape, dtype=np.float32) 
 
 mod = SourceModule(src, options=["--ptxas-options=-v"])
+init_kernel   = mod.get_function("init")
 SSSP_kernel_1 = mod.get_function("SSSP1")
 SSSP_kernel_2 = mod.get_function("SSSP2")
-grid_shape = (nV, 1)
-while np.all(M) : 
-    SSSP_kernel_1 (V, E, W, M, C, U) 
-    autoinit.context.synchronize()
-    SSSP_kernel_2 (V, E, W, M, C, U)
-    autoinit.context.synchronize()
+cuda_grid_shape = (len(V) / CUDA_BLOCK_SHAPE[0], 1)
+np.set_printoptions(threshold=np.nan)
 
-
+t0 = time.time()
+for c in range(100) :
+    print c
+    n_iter = 0
+    init_kernel (M, C, U, np.int32(15), block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape) 
+    autoinit.context.synchronize()
+    #while np.any(M.get()) :
+    for i in range(40) :
+        #print n_iter
+        SSSP_kernel_1 (V, E, W, M, C, U, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape) 
+        autoinit.context.synchronize()
+        SSSP_kernel_2 (V, E, W, M, C, U, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)
+        autoinit.context.synchronize()
+        #print C
+        #n_iter += 1
+print (time.time() - t0) / 100.
 
 
 
