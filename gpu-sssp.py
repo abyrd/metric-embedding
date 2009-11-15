@@ -114,21 +114,26 @@ def from_gsdb(gsdb) :
     V  = np.empty( nV, dtype=np.int32   )
     E  = np.empty( nE, dtype=np.int32   )
     W  = np.empty( nE, dtype=np.float32 )
+    D  = np.zeros( nV, dtype=np.int32   )
 
     print 'Indexing edges...'
     gsdb.execute("CREATE INDEX IF NOT EXISTS edges_vertex1 ON edges (vertex1)")
     print 'Building vertex hash...'
     vdict = dict( (e[1], e[0]) for e in enumerate(gsdb.all_vertex_labels()) )
+    print vdict
     print 'Fetching incoming edges... '
     # original was designed for undirected graphs.
     # also : alignment, textures, broadcasting/packing, calendars, and paths should be worked on.
     # Atomic min to global memory instead of 2 kernels. This should improve cache use. Or even load into registers.
-    edges = gsdb.execute("SELECT vertex1, vertex2, edgetype, edgestate FROM edges ORDER BY vertex2")
+    # seems to go very slow when ordering by vertex2 not vertex1
+    edges = gsdb.execute("SELECT vertex1, vertex2, edgetype, edgestate FROM edges ORDER BY vertex1")
     iE = 0
-    last_label = ''
+    last_label = None
     for vo_label, vd_label, edgetype, edgestate in edges :
-        if vd_label != last_label : V[ vdict[vd_label] ] = iE
-        last_label = vd_label
+        if vd_label != last_label : 
+            V[ vdict[vd_label] ] = iE
+            if last_label is not None : D[ vdict[last_label] ] = iE - vdict[last_label]
+            last_label = vd_label
         E[iE] = vdict[vo_label]
         edgetype  = cPickle.loads( str(edgetype ) )
         edgestate = cPickle.loads( str(edgestate) )
@@ -154,13 +159,15 @@ texture<int, 1, cudaReadModeElementType> tW;
 __global__ __device__ SSSP1 ( int *V, int *E, float *W, int *M, float *C, float *U ) 
 {
     int tid = blockId.x * blockDim.x + threadId.x;
+    int e_offset   = V[tid]
+    int n_incoming = V[tid + 1] - e_offset // does not work yet, need to order data better
     if (M[tid]) { 
         M[tid] = 0;
-        for (all neighbors nid of tid) { 
-            int nid = E[V[tid]...]
-            if (U[nid] > C[tid] + W[nid]) { 
-                U[nid] = C[tid] + W[nid];
-            } 
+        for (int i=0; i<n_incoming; i++) { 
+             int nid = E[e_offset + i]
+             if (U[nid] > C[tid] + W[nid]) { 
+                 U[nid] = C[tid] + W[nid];
+             } 
         }
     } 
 }
@@ -182,10 +189,10 @@ V = gpuarray.to_gpu(V)
 E = gpuarray.to_gpu(E)
 W = gpuarray.to_gpu(W)
 
-M = gpuarray.zeros(V.shape)
-C = gpuarray.empty(V.shape)
+M = gpuarray.zeros(V.shape, dtype=np.int32)
+C = gpuarray.empty(V.shape, dtype=np.float32)
 C.fill(np.inf)
-U = gpuarray.empty(V.shape)
+U = gpuarray.empty(V.shape, dtype=np.float32)
 U.fill(np.inf)
 
 M[S] = 1 
