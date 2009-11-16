@@ -128,6 +128,7 @@ def from_gsdb(gsdb) :
     edges = gsdb.all_edges()
     iE = 0
     for vo_label, vd_label, edge in edges :
+        print repr(edge)
         v_tbl[v_idx[vo_label]].append(v_idx[vd_label])
         iE += 1
         if iE % 10000 == 0 :
@@ -203,11 +204,11 @@ __global__ void SSSP2 ( int *V, int *E, float *W, int *M, float *C, float *U )
 """
 
 gsdb = GraphDatabase(GSDB_FILENAME)
-# V, E, W = from_gsdb(gsdb)
-npz = np.load( 'edgelist.npz' )
-V = npz['V']
-E = npz['E']
-W = npz['W']
+V, E, W = from_gsdb(gsdb)
+#npz = np.load( 'edgelist.npz' )
+#V = npz['V']
+#E = npz['E']
+#W = npz['W']
 V = gpuarray.to_gpu(V)        
 E = gpuarray.to_gpu(E)
 W = gpuarray.to_gpu(W)

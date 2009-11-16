@@ -152,13 +152,18 @@ class MakeMatrixThread(QtCore.QThread) :
                     print "Unreachable vertex. Set to infinity."
                     delta_t = inf
                 else :
-                    delta_t = dest_vertex.payload.time - t0
-                
+                    # delta_t = dest_vertex.payload.time - t0 
+                    delta_t = dest_vertex.payload.time - t0 - dest_vertex.payload.initial_wait
                 if delta_t < 0:
                     print "Negative trip time; set to 0."
                     delta_t = 0
                 
                 matrix[origin_idx, dest_idx] = delta_t
+
+                #sys.stdout.write( '%i %i\n' % (delta_t, dest_vertex.payload.initial_wait) )
+                #sys.stdout.flush()
+                #time.sleep(0.5)
+                
                 if dest_idx < origin_idx : color = 255
                 else :
                     color = 254 - delta_t * 4 / 60
