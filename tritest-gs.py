@@ -16,12 +16,12 @@ from graphserver.core            import Graph, Street, State, WalkOptions
 
 t0 = 1259600000
 print time.ctime(t0) # Mon Nov 30 17:53:20 2009
-TRIP_TIME  = '08:53AM'
+TRIP_TIME  = '09:53AM'
 TRIP_DATE  = '11-30-2009'
 URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s/date/%s/time/%s/walk/0.999/appId/6AC697CF5EB8719DB6F3AEF0B'
 
-gtfsdb = GTFSDatabase  ('../gsdata/trimet-29nov2009.gtfsdb')
-gdb    = GraphDatabase ('../gsdata/trimet-29nov2009.gsdb'  )
+gtfsdb = GTFSDatabase  ('../data/trimet-29nov2009.gtfsdb')
+gdb    = GraphDatabase ('../data/trimet.gsdb'  )
 g      = gdb.incarnate ()
 
 station_labels = [s[0] for s in gtfsdb.stops()]
@@ -33,9 +33,9 @@ random.shuffle(destinations)
 pairs = zip(origins, destinations)
 
 wo = WalkOptions() 
-wo.max_walk = 1600
-wo.walking_overage = 100
-wo.walking_speed = 1.3
+wo.max_walk = 1000
+wo.walking_overage = 0
+wo.walking_speed = 1.2
 
 errors = []
 for o, d in pairs : 
@@ -57,7 +57,7 @@ for o, d in pairs :
     for i in range(len(vertices)) :
         v  = vertices[i]
         vp = v.payload
-        print "%s %3i %04i %10s %15s" % (time.ctime(vp.time), vp.weight / 60, vp.initial_wait, vp.trip_id, v.label),
+        print "%s %3i %04i %10s %15s" % (time.ctime(vp.time), vp.weight / 60, 0, vp.trip_id, v.label),
         try: 
             e  = edges[i]
             ep = e.payload
@@ -67,7 +67,7 @@ for o, d in pairs :
 
     print "\nwalked %i meters, %i vehicles." % (vp.dist_walked, vp.num_transfers)
 
-    tm = (vp.time - t0 - vp.initial_wait) / 60.
+    tm = (vp.time - t0 - 0) / 60. # zeros here and above should be initial wait
     
     from_str = '%f,%f' % (og[2], og[3])
     to_str   = '%f,%f' % (dg[2], dg[3])
@@ -76,18 +76,23 @@ for o, d in pairs :
     r1 = conn.getresponse()
     #print r1.status, r1.reason
     data = r1.read()
-    #print data
+    print data.replace('>', '>\n')
     idx  = data.find('response success') + 18
     if data[idx] == 't' :
         idx0 = data.find('<duration>') + 10
         idx1 = data.find('</duration>')
         tw = int(data[idx0:idx1])
+        idx0 = data.find('<endTime>') + 9
+        idx1 = data.find('</endTime>') - 2
+        endtime = data[idx0:idx1].split(':')
+        diff2 = (int(endtime[0]) * 3600 + int(endtime[1]) * 60 + 10 * 3600 - t0 % (60 * 60 * 24)) / 60. 
         conn.close()
         diff = tm - tw
-        print 'Travel time %03.2f (gs) %i (web) %f (diff)' % (tm, tw, diff)
+        print 'Travel time %03.2f (gs) %i (web) %f (diff) %f (diff without wait)' % (tm, tw, diff, diff2)
         errors.append(diff)
     else :
         print 'Search failed.', data
+    # use rawinput to wait for enter
     time.sleep(5)
 
 
