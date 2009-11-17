@@ -14,11 +14,12 @@ from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
 from graphserver.core            import Graph, Street, State, WalkOptions
 
-t0 = 1259600000
-print time.ctime(t0) # Mon Nov 30 17:53:20 2009
-TRIP_TIME  = '09:53AM'
+SAMPLE_SIZE = 10
+t0 = 1259600000 # Mon Nov 30 17:53:20 2009 UTC
+print time.ctime(t0) 
+TRIP_TIME  = '08:53AM'
 TRIP_DATE  = '11-30-2009'
-URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s/date/%s/time/%s/walk/0.999/appId/6AC697CF5EB8719DB6F3AEF0B'
+URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s/date/%s/time/%s/walk/0.6/appId/6AC697CF5EB8719DB6F3AEF0B'
 
 gtfsdb = GTFSDatabase  ('../data/trimet-29nov2009.gtfsdb')
 gdb    = GraphDatabase ('../data/trimet.gsdb'  )
@@ -30,14 +31,15 @@ origins      = station_labels[:]
 destinations = station_labels[:]
 random.shuffle(origins)
 random.shuffle(destinations)
-pairs = zip(origins, destinations)
+pairs = zip(origins, destinations)[:SAMPLE_SIZE]
 
 wo = WalkOptions() 
-wo.max_walk = 1000
-wo.walking_overage = 0
+wo.max_walk = 800 # about 1/2 mile
+wo.walking_overage = 2
 wo.walking_speed = 1.2
 
 errors = []
+normalize = 0
 for o, d in pairs : 
     og = gtfsdb.stop(o)
     dg = gtfsdb.stop(d)
@@ -51,7 +53,7 @@ for o, d in pairs :
     spt = g.shortest_path_tree( 'sta-' + o, 'sta-' + d, State(1, t0), wo )
     vertices, edges = spt.path( 'sta-' + d )
     if vertices is None:
-        print 'No path found in GS.'
+        print 'Graphserver search failed.'
         continue
         
     for i in range(len(vertices)) :
@@ -76,7 +78,7 @@ for o, d in pairs :
     r1 = conn.getresponse()
     #print r1.status, r1.reason
     data = r1.read()
-    print data.replace('>', '>\n')
+    #print data.replace('>', '>\n')
     idx  = data.find('response success') + 18
     if data[idx] == 't' :
         idx0 = data.find('<duration>') + 10
@@ -85,15 +87,16 @@ for o, d in pairs :
         idx0 = data.find('<endTime>') + 9
         idx1 = data.find('</endTime>') - 2
         endtime = data[idx0:idx1].split(':')
-        diff2 = (int(endtime[0]) * 3600 + int(endtime[1]) * 60 + 10 * 3600 - t0 % (60 * 60 * 24)) / 60. 
+	triptime = TRIP_TIME[:-2].split(':')
+        tww = ( ( int(endtime[0]) * 3600 + int(endtime[1]) * 60 ) - ( int(triptime[0]) * 3600 + int(triptime[1]) * 60 ) ) / 60. 
         conn.close()
         diff = tm - tw
-        print 'Travel time %03.2f (gs) %i (web) %f (diff) %f (diff without wait)' % (tm, tw, diff, diff2)
+        print 'Travel time %03.2f (gs) %i (web) %i (web-wait) %f (diff)' % (tm, tw, tww, diff)
         errors.append(diff)
     else :
-        print 'Search failed.', data
+        print 'Web API search failed.', data
     # use rawinput to wait for enter
-    time.sleep(5)
+    time.sleep(3)
 
-
-
+print 'Errors:', errors
+print 'RMS error:', np.sqrt( np.sum(np.array(errors) ** 2.0) / SAMPLE_SIZE )
