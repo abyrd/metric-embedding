@@ -157,7 +157,7 @@ __global__ void forces (
             // turn off weighting
             weight_here = 1;
             // global influence cutoff above T minutes
-            // if (tt > 60 * 250) weight_here = 0; else weight_here = 1;
+            // if (tt > 60 * 120) weight_here = 0; else weight_here = 1;
             // weight_here = 1 / (tt + 1);
             weight += weight_here;
                                                                                                                                                                                                                                                                                                                             // use __isnan() ? anyway, this is in the outer loop, and should almost never diverge within a warp.                                                                                                 

@@ -148,16 +148,30 @@ class MDSThread(QtCore.QThread) :
         npz = np.load(self.MATRIX_FILE)
         station_coords = npz['station_coords']
         grid_dim       = npz['grid_dim']
-        matrix         = npz['matrix'].astype(np.int32)
+        matrix         = npz['matrix']
 
         # EVERYTHING SHOULD BE IN FLOAT32 for ease of debugging. even times.
         # Matrix and others should be textures, arrays, or in constant memory, to do cacheing.
         # As it is, I'm doing explicit cacheing.
 
+        
+        print np.where(matrix == np.inf)
+        matrix[matrix == np.inf] = 0
+        #matrix[matrix >= 60 * 60 * 3] = 0
+        matrix = matrix.astype(np.int32)
+        #matrix += 60 * 5
+        #matrix = np.nan_to_num(matrix)
+        print matrix
+        
         # force OD matrix symmetry for test
         # THIS was responsible for the coordinate drift!!!
         # need to symmetrize it before copy to device
         matrix = (matrix + matrix.T) / 2
+
+        print matrix
+
+        #print np.any(matrix == np.nan)
+        #print np.any(matrix == np.inf)
 
         station_coords_int = station_coords.round().astype(np.int32)
 
@@ -282,9 +296,9 @@ class MDSThread(QtCore.QThread) :
                 #autoinit.context.synchronize()
                 self.cuda_context.synchronize()
                 
-                #print coords_gpu.get()[200:210,200:210]
-                #print forces_gpu.get()[200:210,200:210]
-                #print weights_gpu.get()[200:210,200:210]
+                print coords_gpu.get()[400:410,350:360]
+                print forces_gpu.get()[400:410,350:360]
+                print weights_gpu.get()[400:410,350:360]
                 time.sleep(0.05)  # let the OS GUI use the GPU for a bit.
                 
                 #pl.imshow( (debug_img_gpu.get() / 60.0).T, cmap=mymap, origin='bottom')#, vmin=0, vmax=100 )
@@ -303,24 +317,24 @@ class MDSThread(QtCore.QThread) :
                 #print 'Kernel debug output:'
                 #print debug_gpu
                 
-                #velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2)) 
-                #pl.imshow( velocities.T, cmap=mymap, origin='bottom', vmin=0, vmax=100 )
-                #pl.title( 'Velocity ( sec / timestep) - step %03d' % n_pass )
-                #pl.colorbar()
-                #pl.savefig( 'img/vel%03d.png' % n_pass )
-                #pl.close()
+                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2)) 
+                pl.imshow( velocities.T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
+                pl.title( 'Velocity ( sec / timestep) - step %03d' % n_pass )
+                pl.colorbar()
+                pl.savefig( 'img/vel%03d.png' % n_pass )
+                pl.close()
                 
-                #pl.imshow( (errors_gpu.get() / weights_gpu.get() / 60.0 ).T, cmap=mymap, origin='bottom', vmin=0, vmax=100 )
-                #pl.title( 'Average absolute error (min) - step %03d' %n_pass )
-                #pl.colorbar()
-                #pl.savefig( 'img/err%03d.png' % n_pass )
-                #pl.close()
+                pl.imshow( (errors_gpu.get() / weights_gpu.get() / 60.0 ).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
+                pl.title( 'Average absolute error (min) - step %03d' %n_pass )
+                pl.colorbar()
+                pl.savefig( 'img/err%03d.png' % n_pass )
+                pl.close()
 
-                #pl.imshow( (debug_img_gpu.get() / 60.0).T, cmap=mymap, origin='bottom', vmin=0, vmax=100 )
-                #pl.title( 'Debugging Output - step %03d' %n_pass )
-                #pl.colorbar()
-                #pl.savefig( 'img/debug%03d.png' % n_pass )
-                #pl.close()
+                pl.imshow( (debug_img_gpu.get() / 60.0).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
+                pl.title( 'Debugging Output - step %03d' %n_pass )
+                pl.colorbar()
+                pl.savefig( 'img/debug%03d.png' % n_pass )
+                pl.close()
                 
                 #self.emit( QtCore.SIGNAL( 'outputImage(QString)' ), QtCore.QString('img/err%03d.png' % n_pass) )
                 #self.emit( QtCore.SIGNAL( 'outputImage(QImage)' ), numpy2qimage( (errors_gpu.get() / weights_gpu.get() / 60.0 / 30 * 255 ).astype(np.uint8) ) )

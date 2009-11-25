@@ -19,7 +19,7 @@ from PyQt4 import QtCore, QtGui
 
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
-from graphserver.core            import Graph, Street, State
+from graphserver.core            import Graph, Street, State, WalkOptions
 from pylab import *
 from numpy import *
 from random import shuffle
@@ -105,35 +105,44 @@ class MakeMatrixThread(QtCore.QThread) :
         #    coord = 
         #    mask = station_coords != station_coords[i]
         #    station_coords = station_coords[mask]
-        self.emit( QtCore.SIGNAL( 'say(QString)' ), QtCore.QString( 'Eliminating equivalent stations...' ) )
-        station_labels = np.array(station_labels)
-        station_coords_new = []
-        station_labels_new = []
-        while len(station_coords) > 0 :
-            coord = np.round(station_coords[0])
-            minIdx = np.argmin(np.sum(np.abs(station_coords - coord), axis=1))
-            station_labels_new.append(station_labels[minIdx])
-            station_coords_new.append(station_coords[minIdx])
-            mask = np.any(np.round(station_coords) != coord, axis=1)
-            #print mask
-            print len(station_coords)
-            print coord
-            print station_coords[np.logical_not(mask)]
-            station_coords = station_coords[mask][:]
-            station_labels = station_labels[mask][:]
-            self.emit( QtCore.SIGNAL( 'progress(int, int)' ), n_stations - len(station_coords_new), n_stations )
-        
-        station_labels = station_labels_new
-        station_coords = station_coords_new
-        station_vertices = [g.get_vertex(slabel) for slabel in station_labels_new]
-        n_stations = len(station_labels)
-        print len(station_labels), len(station_coords), len(station_vertices)
+        # newer version follows
+        #self.emit( QtCore.SIGNAL( 'say(QString)' ), QtCore.QString( 'Eliminating equivalent stations...' ) )
+        #station_labels = np.array(station_labels)
+        #station_coords_new = []
+        #station_labels_new = []
+        #while len(station_coords) > 0 :
+        #    coord = np.round(station_coords[0])
+        #    minIdx = np.argmin(np.sum(np.abs(station_coords - coord), axis=1))
+        #    station_labels_new.append(station_labels[minIdx])
+        #    station_coords_new.append(station_coords[minIdx])
+        #    mask = np.any(np.round(station_coords) != coord, axis=1)
+        #    #print mask
+        #    #print len(station_coords)
+        #    #print coord
+        #    #print station_coords[np.logical_not(mask)]
+        #    station_coords = station_coords[mask][:]
+        #    station_labels = station_labels[mask][:]
+        #    self.emit( QtCore.SIGNAL( 'progress(int, int)' ), n_stations - len(station_coords_new), n_stations )
+        #
+        #station_labels = station_labels_new
+        #station_coords = station_coords_new
+        #station_vertices = [g.get_vertex(slabel) for slabel in station_labels_new]
+        #n_stations = len(station_labels)
+        #print len(station_labels), len(station_coords), len(station_vertices)
         
         print "Making OD matrix..."
-        t0 = 1253800000
+        t0 = 1259600000 # Mon Nov 30 17:53:20 2009 UTC + 1
+        wo = WalkOptions() 
+        wo.max_walk = 800 # about 1/2 mile
+        wo.walking_overage = 0.2
+        wo.walking_speed = 0.8 # trimet uses 0.03 miles / 1 minute
+        wo.transfer_penalty = 60 * 15
+        wo.walking_reluctance = 4
+
         matrix     = zeros( (n_stations, n_stations), dtype=float ) #dtype could be uint16 except that there are inf's ---- why?
         colortable = [QtGui.QColor(i, i, i).rgb() for i in range(256)]
-        colortable[255] = QtGui.QColor(255, 50, 50).rgb()  
+        colortable[254] = QtGui.QColor(050, 128, 050).rgb()  
+        colortable[255] = QtGui.QColor(255, 050, 050).rgb()  
         matrixImage = QtGui.QImage(max_x, max_y, QtGui.QImage.Format_Indexed8)
         matrixImage.fill(0)
         matrixImage.setColorTable(colortable)
@@ -144,16 +153,19 @@ class MakeMatrixThread(QtCore.QThread) :
             self.emit( QtCore.SIGNAL( 'progress(int, int)' ), origin_idx, n_stations )
                         
             origin_label = station_labels[origin_idx]
-            g.spt_in_place(origin_label, None, State(1, t0))
+            #g.spt_in_place(origin_label, None, State(1, t0), wo)
+            spt = g.shortest_path_tree( origin_label, None, State(1, t0), wo )
             for dest_idx in range(n_stations) :
-                dest_vertex = station_vertices[dest_idx]
+                dest_label = station_labels[dest_idx]
+                dest_vertex = spt.get_vertex(dest_label)
                 # first board time should be subtracted here
-                if dest_vertex.payload is None :
-                    print "Unreachable vertex. Set to infinity."
+                # if dest_vertex.payload is None :
+                if dest_vertex is None :
+                    print "Unreachable vertex. Set to infinity.", dest_idx, dest_label
                     delta_t = inf
                 else :
-                    # delta_t = dest_vertex.payload.time - t0 
-                    delta_t = dest_vertex.payload.time - t0 - dest_vertex.payload.initial_wait
+                    delta_t = dest_vertex.payload.time - t0 
+                    # delta_t = dest_vertex.payload.time - t0 - dest_vertex.payload.initial_wait
                 if delta_t < 0:
                     print "Negative trip time; set to 0."
                     delta_t = 0
@@ -164,15 +176,17 @@ class MakeMatrixThread(QtCore.QThread) :
                 #sys.stdout.flush()
                 #time.sleep(0.5)
                 
-                if dest_idx < origin_idx : color = 255
+                if   dest_idx <  origin_idx : color = 254
+                elif dest_idx == origin_idx : color = 255
                 else :
-                    color = 254 - delta_t * 4 / 60
+                    color = 253 - delta_t * 2 / 60
                     if color < 0 : color = 0
                 coord = station_coords[dest_idx]
                 x = coord[0]
                 y = coord[1]
                 matrixImage.setPixel(x,   y,   color)    
             self.emit( QtCore.SIGNAL( 'display(QImage)' ), matrixImage )
+            spt.destroy()
             #time.sleep(1)
                     
         print x * y, "points, done."

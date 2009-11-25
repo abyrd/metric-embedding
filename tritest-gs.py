@@ -9,17 +9,22 @@ import pylab as pl
 import random
 import time
 import httplib
+import os
 
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
 from graphserver.core            import Graph, Street, State, WalkOptions
 
-SAMPLE_SIZE = 10
-t0 = 1259600000 # Mon Nov 30 17:53:20 2009 UTC
-print time.ctime(t0) 
-TRIP_TIME  = '08:53AM'
-TRIP_DATE  = '11-30-2009'
-URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s/date/%s/time/%s/walk/0.6/appId/6AC697CF5EB8719DB6F3AEF0B'
+SAMPLE_SIZE = 20
+SHOW_GS_ROUTE = False
+os.environ['TZ'] = 'US/Pacific'
+time.tzset()
+t0s = "Mon Nov 30 08:50:00 2009"
+t0t = time.strptime(t0s)
+d0s = time.strftime('%a %b %d %Y', t0t)
+t0  = time.mktime(t0t)
+print d0s
+print time.ctime(t0), t0
 
 gtfsdb = GTFSDatabase  ('../data/trimet-29nov2009.gtfsdb')
 gdb    = GraphDatabase ('../data/trimet.gsdb'  )
@@ -35,8 +40,10 @@ pairs = zip(origins, destinations)[:SAMPLE_SIZE]
 
 wo = WalkOptions() 
 wo.max_walk = 800 # about 1/2 mile
-wo.walking_overage = 2
-wo.walking_speed = 1.2
+wo.walking_overage = 0.2
+wo.walking_speed = 0.8 # trimet uses 0.03 miles / 1 minute
+wo.transfer_penalty = 60 * 15
+wo.walking_reluctance = 4
 
 errors = []
 normalize = 0
@@ -56,25 +63,33 @@ for o, d in pairs :
         print 'Graphserver search failed.'
         continue
         
-    for i in range(len(vertices)) :
-        v  = vertices[i]
-        vp = v.payload
-        print "%s %3i %04i %10s %15s" % (time.ctime(vp.time), vp.weight / 60, 0, vp.trip_id, v.label),
-        try: 
-            e  = edges[i]
-            ep = e.payload
-            print type(ep).__name__
-        except:
-            print "ARRIVAL"
-
-    print "\nwalked %i meters, %i vehicles." % (vp.dist_walked, vp.num_transfers)
-
-    tm = (vp.time - t0 - 0) / 60. # zeros here and above should be initial wait
+    if SHOW_GS_ROUTE :
+        print 'Time                      ETime  Weight  IWait     TripID    Vertex label   Outgoing edge class'
+        for i in range(len(vertices)) :
+            v  = vertices[i]
+            vp = v.payload
+            # zeros here and below are initial wait
+            print "%s  %5.1f  %6.1f  %5i %10s %15s  " % (time.ctime(vp.time), (vp.time - t0) / 60.0, vp.weight, 0, vp.trip_id, v.label),
+            try: 
+                e  = edges[i]
+                ep = e.payload
+                print type(ep).__name__
+            except:
+                print "ARRIVAL"
+        print ''
+    else : vp = vertices[-1].payload
     
-    from_str = '%f,%f' % (og[2], og[3])
-    to_str   = '%f,%f' % (dg[2], dg[3])
+    print "walked %i meters, %i vehicles." % (vp.dist_walked, vp.num_transfers)
+
+    tm = (vp.time - t0 - 0) / 60.0 + 5
+    
+    
+    URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromPlace/%s/toPlace/%s/date/%s/time/%s/walk/0.6/appId/6AC697CF5EB8719DB6F3AEF0B'
+    url_time = time.strftime('%I:%M%p',  t0t) # '08:53AM'
+    url_date = time.strftime('%m-%d-%Y', t0t) # '11-30-2009'
+    url = URL_FORMAT % (o, d, url_date, url_time)
     conn = httplib.HTTPConnection('developer.trimet.org')
-    conn.request("GET", URL_FORMAT % (from_str, to_str, TRIP_DATE, TRIP_TIME) )
+    conn.request("GET", url)
     r1 = conn.getresponse()
     #print r1.status, r1.reason
     data = r1.read()
@@ -84,19 +99,17 @@ for o, d in pairs :
         idx0 = data.find('<duration>') + 10
         idx1 = data.find('</duration>')
         tw = int(data[idx0:idx1])
-        idx0 = data.find('<endTime>') + 9
-        idx1 = data.find('</endTime>') - 2
-        endtime = data[idx0:idx1].split(':')
-	triptime = TRIP_TIME[:-2].split(':')
-        tww = ( ( int(endtime[0]) * 3600 + int(endtime[1]) * 60 ) - ( int(triptime[0]) * 3600 + int(triptime[1]) * 60 ) ) / 60. 
         conn.close()
         diff = tm - tw
-        print 'Travel time %03.2f (gs) %i (web) %i (web-wait) %f (diff)' % (tm, tw, tww, diff)
+        idx0 = data.find('<endTime>') + 9
+        idx1 = data.find('</endTime>')
+        print time.ctime(vp.time), data[idx0:idx1]
+        # print 'Travel time %03.1f (gs) %i (web) %f (diff)' % (tm, tw, diff)
         errors.append(diff)
     else :
-        print 'Web API search failed.', data
+        print 'Web API search failed.' # , data
     # use rawinput to wait for enter
-    time.sleep(3)
+    time.sleep(2)
 
 print 'Errors:', errors
 print 'RMS error:', np.sqrt( np.sum(np.array(errors) ** 2.0) / SAMPLE_SIZE )
