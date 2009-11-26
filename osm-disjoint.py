@@ -30,14 +30,16 @@ def fuse_nodes(db, epsilon = 0.0005) :
 def FindDisjunctGraphs (dbname):
         db = OSMDB(dbname)
         
-        fuse_nodes(db)
+        #should really be done before simplifying and splitting
+        #fuse_nodes(db)
         
         c = db.cursor()
         c.execute("DROP table if exists graph_nodes")
         c.execute("DROP table if exists graph_edges")
         c.execute("CREATE table graph_nodes (graph_num INTEGER, node_id TEXT, WKT_GEOMETRY TEXT)")
         c.execute("CREATE table graph_edges (graph_num INTEGER, edge_id TEXT, WKT_GEOMETRY TEXT)")
-        c.execute("CREATE index graph_nodes_node_indx ON graph_nodes(node_id)")
+        c.execute("CREATE index graph_nodes_id_indx ON graph_nodes(node_id)")
+        c.execute("CREATE index graph_edges_id_indx ON graph_edges(edge_id)")
         c.close()
       
         g = Graph()
@@ -88,7 +90,8 @@ def FindDisjunctGraphs (dbname):
                 for e in v.outgoing: # this gives a wierd maze graph, should do for all edges outside loop.
                     lat1, lon1 = c.execute("SELECT lat, lon from nodes where id=?", (e.from_v.label, )).next()
                     lat2, lon2 = c.execute("SELECT lat, lon from nodes where id=?", (e.to_v.label, )).next()
-                    c.execute("INSERT into graph_edges VALUES (?, ?, ?)", (iteration, e.from_v.label + '->' + e.to_v.label, "LINESTRING(%f %f, %f %f)" % (lon1, lat1, lon2, lat2)))
+                    c.execute("INSERT into graph_edges VALUES (?, ?, ?)", 
+                        (iteration, e.from_v.label + '->' + e.to_v.label, "LINESTRING(%f %f, %f %f)" % (lon1, lat1, lon2, lat2)))
                 #print v.label
                 vertices.pop(v.label, None)
                 g.remove_vertex(v.label, True, True)
