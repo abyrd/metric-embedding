@@ -123,7 +123,7 @@ def station_split(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters 
                                                                        last_node_id,
                                                                        node_id,
                                                                        length,
-                                                                       '') )
+                                                                       '') ) # <-- TODO: preserve coordinate lists for linestring geometries
             subedge_idx += 1
             last_node_id = node_id
             

@@ -3,7 +3,7 @@
 
 import random
 import httplib
-import time, os
+import time, os, sys
 
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
@@ -19,7 +19,7 @@ print d0s
 print time.ctime(t0), t0
 
 gtfsdb = GTFSDatabase  ('../data/trimet-29nov2009.gtfsdb')
-gdb    = GraphDatabase ('../data/trimet.gsdb'  )
+gdb    = GraphDatabase ('./test.gsdb'  )
 g      = gdb.incarnate ()
 
 wo = WalkOptions() 
@@ -29,8 +29,25 @@ wo.walking_speed = 0.8     # trimet uses 0.03 miles / 1 minute
 wo.transfer_penalty = 120  # 2 minutes
 wo.walking_reluctance = 3  # walking costs 3x more per minute than transit
 
-while(1) :
-    o,d,t = raw_input('o d t > ').split(' ')
+while(True) :
+    input = raw_input('o d t / wo > ').split(' ')
+    if len(input) == 0 : sys.exit(0)
+    elif input[0] == 'wo' :
+        try :
+            wo.max_walk = int(raw_input('wo.max_walk = '))
+            wo.walking_overage = float(raw_input('wo.walking_overage = '))
+            wo.walking_speed = float(raw_input('wo.walking_speed = '))
+            wo.transfer_penalty = int(raw_input('wo.transfer_penalty = '))
+            wo.walking_reluctance = float(raw_input('wo.walking_reluctance = '))
+        except :
+            print 'invalid input.'
+    else:
+        try:
+            o,d,t = input
+        except :
+            print 'invalid input.'
+            continue
+            
     vo  = 'sta-' + o
     vd  = 'sta-' + d
     t0t = time.strptime('%s %s:00' % (d0s, t), '%a %b %d %Y %H:%M:%S')
