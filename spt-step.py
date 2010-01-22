@@ -11,23 +11,25 @@ from graphserver.core            import Graph, Street, State, WalkOptions
 
 os.environ['TZ'] = 'US/Pacific'
 time.tzset()
-t0s = "Mon Nov 30 08:50:00 2009"
+t0s = "Fri Jan 22 08:50:00 2010"
 t0t = time.strptime(t0s)
 d0s = time.strftime('%a %b %d %Y', t0t)
 t0  = time.mktime(t0t)
 print d0s
 print time.ctime(t0), t0
 
-gtfsdb = GTFSDatabase  ('../data/trimet-29nov2009.gtfsdb')
-gdb    = GraphDatabase ('./test.gsdb'  )
+gtfsdb = GTFSDatabase  ('../data/trimet-20100117.gtfsdb')
+gdb    = GraphDatabase ('../data/trimet-linked-20100117.gsdb'  )
 g      = gdb.incarnate ()
 
 wo = WalkOptions() 
-wo.max_walk = 1600         # about 1 mile
-wo.walking_overage = 0.2   # overflow trigger parameter
-wo.walking_speed = 0.8     # trimet uses 0.03 miles / 1 minute
-wo.transfer_penalty = 120  # 2 minutes
-wo.walking_reluctance = 3  # walking costs 3x more per minute than transit
+wo.max_walk = 1600 
+wo.walking_overage = 0.0
+wo.walking_speed = 1.0 # trimet uses 0.03 miles / 1 minute - but it uses straight line distance as well
+wo.transfer_penalty = 60 * 60 * 5
+wo.walking_reluctance = 2
+wo.max_transfers = 2
+wo.transfer_slack = 60 * 4
 
 while(True) :
     input = raw_input('o d t / wo > ').split(' ')
@@ -57,28 +59,17 @@ while(True) :
     print "time:        ", time.ctime(t0), t0
     
     spt = g.shortest_path_tree( vo, vd, State(1, t0), wo )
-    vertices, edges = spt.path( vd )
-    if vertices is None:
+    try:
+        vp = spt.get_vertex( 'sta-' + d ).best_state
+    except:
         print 'Graphserver search failed.'
         continue
         
-    print 'Time                      ETime  Weight  IWait     TripID    Vertex label   Outgoing edge class'
-    for i in range(len(vertices)) :
-        v  = vertices[i]
-        vp = v.payload
-        # zeros here and below are initial wait
-        print "%s  %5.1f  %6.1f  %5i %10s %15s  " % (time.ctime(vp.time), (vp.time - t0) / 60.0, vp.weight, 0, vp.trip_id, v.label),
-        try: 
-            e  = edges[i]
-            ep = e.payload
-            print type(ep).__name__
-        except:
-            print "ARRIVAL"
-
+    vp.narrate()
     print "\nwalked %i meters, %i vehicles." % (vp.dist_walked, vp.num_transfers)
     tm = (vp.time - t0 - 0) / 60.0 + 5
     
-    URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromPlace/%s/toPlace/%s/date/%s/time/%s/walk/0.6/appId/6AC697CF5EB8719DB6F3AEF0B'
+    URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromPlace/%s/toPlace/%s/date/%s/time/%s/walk/1/appId/6AC697CF5EB8719DB6F3AEF0B'
     url_time = time.strftime('%I:%M%p',  t0t) # '08:53AM'
     url_date = time.strftime('%m-%d-%Y', t0t) # '11-30-2009'
     url = URL_FORMAT % (o, d, url_date, url_time)

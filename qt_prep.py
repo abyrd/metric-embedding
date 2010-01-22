@@ -23,7 +23,7 @@ from graphserver.core            import Graph, Street, State, WalkOptions
 from pylab import *
 from numpy import *
 from random import shuffle
-import time 
+import time, os
 from socket import *
 import geotools
 from math import ceil
@@ -131,13 +131,23 @@ class MakeMatrixThread(QtCore.QThread) :
         #print len(station_labels), len(station_coords), len(station_vertices)
         
         print "Making OD matrix..."
-        t0 = 1259600000 # Mon Nov 30 17:53:20 2009 UTC + 1
+        os.environ['TZ'] = 'US/Pacific'
+        time.tzset()
+        t0s = "Fri Jan 22 08:00:00 2010"
+        t0t = time.strptime(t0s)
+        d0s = time.strftime('%a %b %d %Y', t0t)
+        t0  = int(time.mktime(t0t))
+        print 'search date: ', d0s
+        print 'search time: ', time.ctime(t0), t0
+
         wo = WalkOptions() 
-        wo.max_walk = 800 # about 1/2 mile
-        wo.walking_overage = 0.2
+        wo.max_walk = 20000 
+        wo.walking_overage = 0.1
         wo.walking_speed = 0.8 # trimet uses 0.03 miles / 1 minute
-        wo.transfer_penalty = 60 * 15
-        wo.walking_reluctance = 4
+        wo.transfer_penalty = 60 * 10
+        wo.walking_reluctance = 2
+        wo.max_transfers = 40
+        wo.transfer_slack = 60 * 4
 
         matrix     = zeros( (n_stations, n_stations), dtype=float ) #dtype could be uint16 except that there are inf's ---- why?
         colortable = [QtGui.QColor(i, i, i).rgb() for i in range(256)]
@@ -164,8 +174,9 @@ class MakeMatrixThread(QtCore.QThread) :
                     print "Unreachable vertex. Set to infinity.", dest_idx, dest_label
                     delta_t = inf
                 else :
-                    delta_t = dest_vertex.payload.time - t0 
-                    # delta_t = dest_vertex.payload.time - t0 - dest_vertex.payload.initial_wait
+                    # delta_t = dest_vertex.best_state.time - t0 
+                    bs = dest_vertex.best_state
+                    delta_t = bs.time - t0 - bs.initial_wait
                 if delta_t < 0:
                     print "Negative trip time; set to 0."
                     delta_t = 0
@@ -176,15 +187,21 @@ class MakeMatrixThread(QtCore.QThread) :
                 #sys.stdout.flush()
                 #time.sleep(0.5)
                 
-                if   dest_idx <  origin_idx : color = 254
-                elif dest_idx == origin_idx : color = 255
+                if   dest_idx == origin_idx - 1 : color = 254
+                elif dest_idx == origin_idx :     color = 255
                 else :
-                    color = 253 - delta_t * 2 / 60
+                    color = 253 - delta_t * 3 / 60
                     if color < 0 : color = 0
                 coord = station_coords[dest_idx]
                 x = coord[0]
                 y = coord[1]
-                matrixImage.setPixel(x,   y,   color)    
+                if color >= 254 : 
+                    for x2 in range(x-1, x+2) :
+                        for y2 in range(y-1, y+2) :
+                            matrixImage.setPixel(x2, y2, color)    
+                else :
+                    matrixImage.setPixel(x, y, color)    
+
             self.emit( QtCore.SIGNAL( 'display(QImage)' ), matrixImage )
             spt.destroy()
             #time.sleep(1)
