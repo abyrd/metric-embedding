@@ -98,17 +98,17 @@ class LaunchWindow(QtGui.QWidget):
             self.grid_dim       = npz['grid_dim']
             progressDialog.setValue(1)
             app.processEvents()
-            self.matrix         = npz['matrix'].astype(np.int32)
+            self.matrix         = npz['matrix'] #.astype(np.int32)
             matrixImage = QtGui.QImage(self.grid_dim[0] / 2, self.grid_dim[1] / 2, QtGui.QImage.Format_Indexed8)
             matrixImage.fill(20)
             matrixImage.setColorTable([QtGui.QColor(i, i, i).rgb() for i in range(256)])
-            for coord in self.station_coords :
-                x = coord[0]/2
-                y = coord[1]/2
-                matrixImage.setPixel(x,   y,   255)    
-                matrixImage.setPixel(x,   y+1, 255)    
-                matrixImage.setPixel(x+1, y,   255)    
-                matrixImage.setPixel(x+1, y+1, 255)    
+#            for coord in self.station_coords :
+#                x = coord[0]/2
+#                y = coord[1]/2
+#                matrixImage.setPixel(x,   y,   255)    
+#                matrixImage.setPixel(x,   y+1, 255)    
+#                matrixImage.setPixel(x+1, y,   255)    
+#                matrixImage.setPixel(x+1, y+1, 255)    
             self.stationDisplayLabel.setPixmap(QtGui.QPixmap().fromImage(matrixImage))
             self.launchButton.setEnabled(True)
         except Exception as ex : QtGui.QMessageBox.critical(self, 'Laod Failed', str(ex))
@@ -130,7 +130,7 @@ class LaunchWindow(QtGui.QWidget):
             self.makeMatrixThread.makeMatrix(gtfsdb, gsdb)
             
         except Exception as ex :
-            QtGui.QMessageBox.critical(self, 'Laod Failed', str(ex))
+            QtGui.QMessageBox.critical(self, 'Load Failed', str(ex))
             self.setEnabled(True)
 
 

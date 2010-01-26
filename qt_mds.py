@@ -6,11 +6,13 @@ from graphserver.core            import Graph, Street, State
 from matplotlib.colors           import LinearSegmentedColormap
 import pylab as pl 
 import numpy as np
+import matplotlib.pyplot as plt
 import time 
 import geotools
 import math
 import pyproj
 import sys
+import png
 
 import pycuda.driver   as cuda
 #import pycuda.autoinit as autoinit
@@ -225,7 +227,7 @@ class MDSThread(QtCore.QThread) :
         mymap = LinearSegmentedColormap('mymap', cdict)
         mymap.set_over( (1.0, 0.0, 1.0) )
         mymap.set_bad ( (0.0, 0.0, 0.0) )
-        pl.plt.register_cmap(cmap=mymap)
+        #pl.plt.register_cmap(cmap=mymap)
 
         # set up arrays for calculations
 
@@ -267,8 +269,8 @@ class MDSThread(QtCore.QThread) :
         # autoinit.context.synchronize()
         self.cuda_context.synchronize()
         
-        #print "Near stations list:"
-        #print near_stations_gpu
+        print "Near stations list:"
+        print near_stations_gpu
         
         #sys.exit()
         
@@ -313,16 +315,22 @@ class MDSThread(QtCore.QThread) :
 
             print self.IMAGES_EVERY
             if (self.IMAGES_EVERY > 0) and (n_pass % self.IMAGES_EVERY == 0) :
-            
                 #print 'Kernel debug output:'
                 #print debug_gpu
                 
                 velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2)) 
-                pl.imshow( velocities.T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
+#                png_f = open('img/vel%03d.png' % n_pass, 'wb')
+#                png_w = png.Writer(max_x, max_y, greyscale = True, bitdepth=8)
+#                png_w.write(png_f, velocities / 1200)
+#                png_f.close()
+
+#                np.set_printoptions(threshold=np.nan)
+#                print velocities.astype(np.int32)
+                pl.imshow( velocities.T, origin='bottom') #, vmin=0, vmax=100 )
                 pl.title( 'Velocity ( sec / timestep) - step %03d' % n_pass )
                 pl.colorbar()
                 pl.savefig( 'img/vel%03d.png' % n_pass )
-                pl.close()
+                plt.close()
                 
                 pl.imshow( (errors_gpu.get() / weights_gpu.get() / 60.0 ).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
                 pl.title( 'Average absolute error (min) - step %03d' %n_pass )
@@ -338,25 +346,25 @@ class MDSThread(QtCore.QThread) :
                 
                 #self.emit( QtCore.SIGNAL( 'outputImage(QString)' ), QtCore.QString('img/err%03d.png' % n_pass) )
                 #self.emit( QtCore.SIGNAL( 'outputImage(QImage)' ), numpy2qimage( (errors_gpu.get() / weights_gpu.get() / 60.0 / 30 * 255 ).astype(np.uint8) ) )
-                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2))
-                velocities /= 60.
-                velocities *= 255
-                np.clip(velocities, 0, 255, velocities)  
-                velImage = numpy2qimage(velocities.astype(np.uint8))
+#                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2))
+#                velocities /= 60.
+#                velocities *= 255
+#                np.clip(velocities, 0, 255, velocities)  
+#                velImage = numpy2qimage(velocities.astype(np.uint8))
+#                
+#                errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
+#                errors /= 60.0 
+#                errors /= 30
+#                errors *= 255
+#                np.clip(errors, 0, 255, errors)  
+#                errImage = numpy2qimage(errors.astype(np.uint8))
                 
-                errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
-                errors /= 60.0 
-                errors /= 30
-                errors *= 255
-                np.clip(errors, 0, 255, errors)  
-                errImage = numpy2qimage(errors.astype(np.uint8))
-                
-                self.emit( QtCore.SIGNAL( 'outputImage(QImage, QImage)' ), errImage, velImage )
+#                self.emit( QtCore.SIGNAL( 'outputImage(QImage, QImage)' ), velImage, errImage )
               
             sys.stdout.write( "/ avg pass time %02.1f sec" % ( (time.time() - t_start) / n_pass, ) )
             sys.stdout.flush()
 
         #end of main loop
         np.save('result.npy', coords_gpu.get())
-        cuda_context.pop() # have to pop context after copying results
+#        self.cuda_context.pop() # have to pop context after copying results
         
