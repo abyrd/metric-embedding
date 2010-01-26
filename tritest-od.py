@@ -5,7 +5,6 @@
 #
 
 import numpy as np
-import pylab as pl
 import random
 import time
 import httplib
@@ -13,12 +12,15 @@ import httplib
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
 
-TRIP_TIME  = '07:46AM'
-TRIP_DATE  = '11-19-2009'
+TRIP_TIME  = '08:00AM'
+TRIP_DATE  = '01-29-2010'
 URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s/date/%s/time/%s/walk/0.999/appId/6AC697CF5EB8719DB6F3AEF0B'
 
-gtfsdb = GTFSDatabase  ('../gsdata/trimet_13sep2009.gtfsdb')
-npz = np.load('data/od_matrix_trimet_linked.npz')
+print 'search date: ', TRIP_DATE
+print 'search time: ', TRIP_TIME
+
+gtfsdb = GTFSDatabase  ('../data/trimet-20100117.gtfsdb')
+npz = np.load('../data/trimet-20100117.od_matrix.npz')
 
 station_labels = npz['station_labels']
 matrix         = npz['matrix'].astype(np.int32)
