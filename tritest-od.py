@@ -19,8 +19,8 @@ URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s
 print 'search date: ', TRIP_DATE
 print 'search time: ', TRIP_TIME
 
-gtfsdb = GTFSDatabase  ('../data/trimet-20100117.gtfsdb')
-npz = np.load('../data/trimet-20100117.od_matrix.npz')
+gtfsdb = GTFSDatabase  ('../data/pdx/trimet-20100117.gtfsdb')
+npz = np.load('../data/pdx/trimet-20100117.od_matrix.npz')
 
 station_labels = npz['station_labels']
 matrix         = npz['matrix'].astype(np.int32)

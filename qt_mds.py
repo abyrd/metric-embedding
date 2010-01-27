@@ -12,7 +12,7 @@ import geotools
 import math
 import pyproj
 import sys
-import png
+#import png
 
 import pycuda.driver   as cuda
 #import pycuda.autoinit as autoinit
@@ -318,7 +318,7 @@ class MDSThread(QtCore.QThread) :
                 #print 'Kernel debug output:'
                 #print debug_gpu
                 
-                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2)) 
+#                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2)) 
 #                png_f = open('img/vel%03d.png' % n_pass, 'wb')
 #                png_w = png.Writer(max_x, max_y, greyscale = True, bitdepth=8)
 #                png_w.write(png_f, velocities / 1200)
@@ -326,41 +326,44 @@ class MDSThread(QtCore.QThread) :
 
 #                np.set_printoptions(threshold=np.nan)
 #                print velocities.astype(np.int32)
-                pl.imshow( velocities.T, origin='bottom') #, vmin=0, vmax=100 )
-                pl.title( 'Velocity ( sec / timestep) - step %03d' % n_pass )
-                pl.colorbar()
-                pl.savefig( 'img/vel%03d.png' % n_pass )
-                plt.close()
-                
-                pl.imshow( (errors_gpu.get() / weights_gpu.get() / 60.0 ).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
-                pl.title( 'Average absolute error (min) - step %03d' %n_pass )
-                pl.colorbar()
-                pl.savefig( 'img/err%03d.png' % n_pass )
-                pl.close()
 
-                pl.imshow( (debug_img_gpu.get() / 60.0).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
-                pl.title( 'Debugging Output - step %03d' %n_pass )
-                pl.colorbar()
-                pl.savefig( 'img/debug%03d.png' % n_pass )
-                pl.close()
+#                pl.imshow( velocities.T, origin='bottom') #, vmin=0, vmax=100 )
+#                pl.title( 'Velocity ( sec / timestep) - step %03d' % n_pass )
+#                pl.colorbar()
+#                pl.savefig( 'img/vel%03d.png' % n_pass )
+#                plt.close()
+#                
+#                pl.imshow( (errors_gpu.get() / weights_gpu.get() / 60.0 ).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
+#                pl.title( 'Average absolute error (min) - step %03d' %n_pass )
+#                pl.colorbar()
+#                pl.savefig( 'img/err%03d.png' % n_pass )
+#                pl.close()
+
+#                pl.imshow( (debug_img_gpu.get() / 60.0).T, cmap=mymap, origin='bottom') #, vmin=0, vmax=100 )
+#                pl.title( 'Debugging Output - step %03d' %n_pass )
+#                pl.colorbar()
+#                pl.savefig( 'img/debug%03d.png' % n_pass )
+#                pl.close()
                 
                 #self.emit( QtCore.SIGNAL( 'outputImage(QString)' ), QtCore.QString('img/err%03d.png' % n_pass) )
                 #self.emit( QtCore.SIGNAL( 'outputImage(QImage)' ), numpy2qimage( (errors_gpu.get() / weights_gpu.get() / 60.0 / 30 * 255 ).astype(np.uint8) ) )
-#                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2))
-#                velocities /= 60.
-#                velocities *= 255
-#                np.clip(velocities, 0, 255, velocities)  
-#                velImage = numpy2qimage(velocities.astype(np.uint8))
-#                
-#                errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
-#                errors /= 60.0 
-#                errors /= 30
-#                errors *= 255
-#                np.clip(errors, 0, 255, errors)  
-#                errImage = numpy2qimage(errors.astype(np.uint8))
+                velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2))
+                velocities /= 60.
+                velocities *= 255
+                np.clip(velocities, 0, 255, velocities)  
+                velImage = numpy2qimage(velocities.astype(np.uint8)).transformed(QtGui.QMatrix().rotate(-90))
                 
-#                self.emit( QtCore.SIGNAL( 'outputImage(QImage, QImage)' ), velImage, errImage )
-              
+                errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
+                errors /= 60.0 
+                errors /= 30
+                errors *= 255
+                np.clip(errors, 0, 255, errors)  
+                errImage = numpy2qimage(errors.astype(np.uint8)).transformed(QtGui.QMatrix().rotate(-90))
+                
+                self.emit( QtCore.SIGNAL( 'outputImage(QImage, QImage)' ), errImage, velImage )
+                velImage.save('img/vel%03d.png' % n_pass, 'png' )
+                errImage.save('img/err%03d.png' % n_pass, 'png' )            
+  
             sys.stdout.write( "/ avg pass time %02.1f sec" % ( (time.time() - t_start) / n_pass, ) )
             sys.stdout.flush()
 
