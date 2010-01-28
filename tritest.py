@@ -12,23 +12,23 @@ import httplib
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
 
-TRIP_TIME  = '07:46AM'
-TRIP_DATE  = '11-19-2009'
+TRIP_TIME  = '08:00AM'
+TRIP_DATE  = '01-29-2010'
 URL_FORMAT = '/ws/V1/trips/tripplanner/maxIntineraries/1/fromcoord/%s/tocoord/%s/date/%s/time/%s/appId/6AC697CF5EB8719DB6F3AEF0B'
 
-gtfsdb = GTFSDatabase  ('../gsdata/trimet_13sep2009.gtfsdb')
-gdb    = GraphDatabase ('../gsdata/trimet_13sep2009.linked.gsdb')
+gtfsdb = GTFSDatabase  ('../data/pdx/trimet-20100117.gtfsdb')
 
-t0 = 1253800000
-#g  = gdb.incarnate()
-
-npz = np.load('data/od_matrix_trimet_linked.npz')
+npz = np.load('../data/pdx/trimet-20100117.od_matrix.npz')
 station_labels = npz['station_labels']
 station_coords = npz['station_coords']
 grid_dim       = npz['grid_dim']
 matrix         = npz['matrix'].astype(np.int32)
 
-r = np.load('data/result.PDX-300-iterations.npy')
+matrix = (matrix + matrix.T) / 2
+
+r = np.load('results/pdx-5d-1000i/result.npy')
+
+station_idx = dict( zip(station_labels, range(len(station_labels))) )
 
 origins = list(zip(station_labels, np.round(station_coords).astype(np.int32)))
 destinations = origins[:] # copy 1 level
@@ -51,8 +51,10 @@ for o, d in pairs :
     p1 = r[ o[1][0], o[1][1] ]
     p2 = r[ d[1][0], d[1][1] ]
     vec = p1 - p2
-    tm = np.sqrt(np.sum(vec ** 2)) / 60
+    tmds = np.sqrt(np.sum(vec ** 2)) / 60
     
+    tmat = matrix[ station_idx[ o[0] ], station_idx[ d[0] ] ] / 60.
+
     llo = (og[2], og[3])
     lld = (dg[2], dg[3])
     conn = httplib.HTTPConnection('developer.trimet.org')
@@ -62,15 +64,16 @@ for o, d in pairs :
     r1 = conn.getresponse()
     #print r1.status, r1.reason
     data = r1.read()
-    print data
+    #print data
     idx  = data.find('response success') + 18
     if data[idx] == 't' :
         idx0 = data.find('<duration>') + 10
         idx1 = data.find('</duration>')
         tw = int(data[idx0:idx1])
         conn.close()
-        diff = tm - tw
-        print 'Travel time %03.2f (mds) %i (web) %f (diff)' % (tm, tw, diff)
+        diff = tmds - tmat
+        percent = diff / tmat * 100
+        print 'Travel time %03.2f (mds) %i (mat) %i (web) %f (diff) %f%%' % (tmds, tmat, tw, diff, percent)
         errors.append(diff)
     else :
         print 'Search failed.', data
