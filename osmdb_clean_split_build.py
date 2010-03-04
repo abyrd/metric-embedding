@@ -1,15 +1,21 @@
 #!/usr/bin/env python2.6
+#
 
+from graphserver.core import Graph
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
-from graphserver.ext.osm.osmdb import OSMDB, Node
-from graphserver.ext.osm.osmdb import cons
- 
+from graphserver.ext.osm.osmdb import OSMDB, Node, cons
+from graphserver.ext.osm.osmfilters import StitchDisjunctGraphs, PurgeDisjunctGraphsFilter
+
+from graphserver.compiler.gdb_import_gtfs import gdb_load_gtfsdb_to_boardalight
+from graphserver.compiler.gdb_import_osm  import gdb_import_osm
+
+from geotools import geoid_dist, angular_dist
+
 import sys, time
 import ligeos as lg
 from optparse import OptionParser
 from rtree import Rtree
 
-from geotools import geoid_dist
 
 def station_split(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max distance to link node), degrees (intersection box size)
     split_idx = 1000000000 # base node/edge number. above usual OSM ids, but still leaves half of 32bit int range.
@@ -143,22 +149,39 @@ def station_split(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters 
     # osmdbs don't have a commit function, so must use the connection member directly
     osmdb.conn.commit()
     c.close()
+
+
+def main(osm_xml, osm_db, gtfs_db): 
     
-                    
+    print "CREATING AND POPULATING OSM DATABASE"
+    osmdb =  OSMDB( osm_db, overwrite=True )
+    osmdb.populate( osm_xml, reporter=sys.stdout )
+
+    print "CLEANING UP OSM DATABASE"
+    StitchDisjunctGraphs().run( osmdb )
+    osmdb.create_and_populate_edges_table( tolerant=True )
+    PurgeDisjunctGraphsFilter().run( osmdb ) #, threshold = 1000 )
+    
+    print "SPLITTING OSM EDGES FOR BETTER STATION LINKING"
+    gtfsdb = GTFSDatabase (gtfs_db)
+    station_split (osmdb, gtfsdb)
+    
+    print "DONE."
+    sys.exit(0)    
+            
+
 if __name__=='__main__':
-    usage = """usage: python stationsplit_osmdb.py <osmdb_filename> <gtfsdb_filename>"""
+    usage = """usage: python build-graph.py <input_osm_xml> <new_osm_database> <input_gtfs_database>"""
     parser = OptionParser(usage=usage)
     
     (options, args) = parser.parse_args()
     
-    if len(args) != 2:
+    if len(args) != 3:
         parser.print_help()
         exit(-1)
         
-    osmdb_filename   = args[0]
-    gtfsdb_filename  = args[1]
+    osm_xml = args[0]
+    osm_db  = args[1]
+    gtfs_db = args[2]
     
-    osmdb  = OSMDB( osmdb_filename )
-    gtfsdb = GTFSDatabase( gtfsdb_filename )
-
-    station_split(osmdb, gtfsdb)
+    main(osm_xml, osm_db, gtfs_db)

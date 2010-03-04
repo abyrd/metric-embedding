@@ -1,0 +1,49 @@
+Within data dir:
+
+1. Make GTFS into GTFSDB.
+   $ gs_gtfsdb_build trimet-2010-02-28.gtfs.zip trimet-2010-02-28.gtfsdb
+
+2. Find extent of GTFSDB stations in sqlite.
+   $ sqlite3 ~/data/pdx/trimet-2010-02-28.gtfsdb \
+     "select min(stop_lon),min(stop_lat),max(stop_lon),max(stop_lat) from stops"
+
+3. Extract Portland TriMet service area.
+   Keeps nodes outside the box if they are part of ways inside the box.
+   On approx 1GB cloudmade Oregon set takes around 3h30.
+   $ ~/devel/osmosis-0.34/bin/osmosis \
+     --read-xml  file=~/data/pdx/cloudmade_oregon.osm \
+     --bounding-box completeWays=yes \
+       top=45.68688202    left=-123.18748474 \
+       bottom=45.23430252 right=-122.20288086 \
+     --write-xml file=~/data/pdx/trimet_all.osm
+
+4. Keep only ways that can be walked on and their nodes.
+   On trimet area, takes around 13 seconds.
+   $ ~/devel/osmosis-0.34/bin/osmosis \
+     --read-xml file=~/data/pdx/trimet_all.osm \
+     --tf accept-ways highway=* --tf reject-ways highway=motorway,motorway_link \
+     --tf reject-relations \
+     --used-node --write-xml file=~/data/pdx/trimet_walk.osm
+
+5. Make osm (xml) into osmdb (sqlite database) also cleaning up and splitting ways.
+   gs_compile_osm makes edges right away, but it should be done after running filters.
+   This script hack takes care of the problem temporarily.
+   $ python osmdb_clean_split_build.py \
+     ~/data/pdx/trimet_walk.osm \
+     ~/data/pdx/trimet_walk_clean.osmdb \
+     ~/data/pdx/trimet-2010-02-28.gtfsdb
+
+6. Import GTFS database into graph database
+   $ gs_import_gtfs trimet.gsdb trimet-fjdkqsm-.gtfsdb
+   (this step is slow, maybe back up the result)
+   $ cp trimet.gsdb trimet_transit_only.gsdb
+
+7. Import OSM database into graph database
+   $ gs_import_osm trimet.gsdb trimet_walk_clean.osmdb
+
+8. Link GTFS stations to OSM nodes in graph database
+   $ gs_link_osm_gtfs trimet.gsdb trimet_walk_clean.osmdb trimet-2010-02-28.gtfsdb
+
+9. Add WKT strings to graph database, if desired
+   $ gdb_add_wkt.py trimet.gsdb trimet_walk_clean.osmdb trimet-2010-02-28.gtfsdb
+

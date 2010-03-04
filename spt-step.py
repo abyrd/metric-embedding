@@ -11,25 +11,25 @@ from graphserver.core            import Graph, Street, State, WalkOptions
 
 os.environ['TZ'] = 'US/Pacific'
 time.tzset()
-t0s = "Fri Jan 22 08:50:00 2010"
+t0s = "Thu Mar 04 08:50:00 2010"
 t0t = time.strptime(t0s)
 d0s = time.strftime('%a %b %d %Y', t0t)
 t0  = time.mktime(t0t)
 print d0s
 print time.ctime(t0), t0
 
-gtfsdb = GTFSDatabase  ('../data/trimet-20100117.gtfsdb')
-gdb    = GraphDatabase ('../data/trimet-linked-20100117.gsdb'  )
+gtfsdb = GTFSDatabase  ('/home/andrew/data/pdx/trimet-2010-02-28.gtfsdb')
+gdb    = GraphDatabase ('/home/andrew/data/pdx/trimet.gsdb'  )
 g      = gdb.incarnate ()
 
 wo = WalkOptions() 
 wo.max_walk = 1600 
 wo.walking_overage = 0.0
 wo.walking_speed = 1.0 # trimet uses 0.03 miles / 1 minute - but it uses straight line distance as well
-wo.transfer_penalty = 60 * 60 * 5
+wo.transfer_penalty = 60 * 10
 wo.walking_reluctance = 2
-wo.max_transfers = 2
-wo.transfer_slack = 60 * 4
+wo.max_transfers = 10
+wo.transfer_slack = 0 * 4
 
 while(True) :
     input = raw_input('o d t / wo > ').split(' ')
