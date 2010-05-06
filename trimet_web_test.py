@@ -19,10 +19,10 @@ from graphserver.graphdb         import GraphDatabase
 from graphserver.core            import Graph, Street, State, WalkOptions
 
 SAMPLE_SIZE = 50
-SHOW_GS_ROUTE = True
+SHOW_GS_ROUTE = False
 os.environ['TZ'] = 'US/Pacific'
 time.tzset()
-t0s = "Thu Mar 04 08:50:00 2010"
+t0s = "Thu Apr 15 08:50:00 2010"
 t0t = time.strptime(t0s)
 d0s = time.strftime('%a %b %d %Y', t0t)
 t0  = time.mktime(t0t)
@@ -46,9 +46,9 @@ wo.max_walk = 1600
 wo.walking_overage = 0.0
 wo.walking_speed = 1.0 # trimet uses 0.03 miles / 1 minute - but it uses straight line distance as well
 wo.transfer_penalty = 60 * 10
-wo.walking_reluctance = 2
-wo.max_transfers = 10
-wo.transfer_slack = 0 * 4
+wo.walking_reluctance = 1.5
+wo.max_transfers = 5
+wo.transfer_slack = 60 * 4
 
 residuals  = []
 magnitudes = []

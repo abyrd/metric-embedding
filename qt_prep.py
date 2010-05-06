@@ -133,7 +133,7 @@ class MakeMatrixThread(QtCore.QThread) :
         print "Making OD matrix..."
         os.environ['TZ'] = 'US/Pacific'
         time.tzset()
-        t0s = "Fri Jan 22 08:00:00 2010"
+        t0s = "Tue Mar 09 08:00:00 2010"
         t0t = time.strptime(t0s)
         d0s = time.strftime('%a %b %d %Y', t0t)
         t0  = int(time.mktime(t0t))
@@ -143,7 +143,7 @@ class MakeMatrixThread(QtCore.QThread) :
         wo = WalkOptions() 
         wo.max_walk = 20000 
         wo.walking_overage = 0.1
-        wo.walking_speed = 0.8 # trimet uses 0.03 miles / 1 minute
+        wo.walking_speed = 1 # trimet uses 0.03 miles / 1 minute
         wo.transfer_penalty = 60 * 10
         wo.walking_reluctance = 2
         wo.max_transfers = 40

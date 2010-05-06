@@ -42,6 +42,7 @@ Within data dir:
    $ gs_import_osm trimet.gsdb trimet_walk_clean.osmdb
 
 8. Link GTFS stations to OSM nodes in graph database
+   (Stations should also be linked to one another within a short range, in case there is no road near them.)
    $ gs_link_osm_gtfs trimet.gsdb trimet_walk_clean.osmdb trimet-2010-02-28.gtfsdb
 
 9. Add WKT strings to graph database, if desired

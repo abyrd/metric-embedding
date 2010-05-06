@@ -348,14 +348,14 @@ class MDSThread(QtCore.QThread) :
                 #self.emit( QtCore.SIGNAL( 'outputImage(QString)' ), QtCore.QString('img/err%03d.png' % n_pass) )
                 #self.emit( QtCore.SIGNAL( 'outputImage(QImage)' ), numpy2qimage( (errors_gpu.get() / weights_gpu.get() / 60.0 / 30 * 255 ).astype(np.uint8) ) )
                 velocities = np.sqrt(np.sum(forces_gpu.get() ** 2, axis = 2))
-                velocities /= 60.
+                velocities /= 15. # out of 15 sec range
                 velocities *= 255
                 np.clip(velocities, 0, 255, velocities)  
                 velImage = numpy2qimage(velocities.astype(np.uint8)).transformed(QtGui.QMatrix().rotate(-90))
                 
                 errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
-                errors /= 60.0 
-                errors /= 30
+                errors /= 60.
+                errors /= 15. # out of 15 min range
                 errors *= 255
                 np.clip(errors, 0, 255, errors)  
                 errImage = numpy2qimage(errors.astype(np.uint8)).transformed(QtGui.QMatrix().rotate(-90))
