@@ -11,7 +11,7 @@ import ligeos as lg
 from optparse import OptionParser
 
 
-def linker(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max distance to link node), degrees (intersection box size)
+def linker(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max distance to link node), degrees (spatial index box size)
     print "Splitting ways into individual segments..."
     c = osmdb.conn
     cur = c.cursor()
@@ -52,6 +52,11 @@ def linker(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max di
     # Called from gtfsdb.link_to_osmdb(osmdb)
     # Which cycles through all stops, calling the osmdb function and saving references.
     
+    gcur = gtfsdb.get_cursor()
+    gcur.execute( "DROP TABLE IF EXISTS osm_links" )
+    gcur.execute( "CREATE TABLE osm_links (gtfs_stop TEXT, osm_vertex TEXT)" )
+    gtfsdb.conn.commit() 
+        
     EARTH_RADIUS = 6367000
     PI_OVER_180 =  0.017453293    
     # here you don't need distance in meters since you're just looking for closest
@@ -72,6 +77,9 @@ def linker(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max di
         print "    Closest endpoint vertex %s at %d meters" % (vid, d)
         if d < split_threshold :
             print "    Link to existing vertex."
+            # should return or save vertex id in gtfsdb
+            cur.execute( "UPDATE vertices SET refs = refs + 1 WHERE id = ?", (vid,) )
+            gcur.execute( "INSERT INTO osm_links VALUES (?, ?)", (stopid, vid) )
         else :
             # split the way segment in pieces to make a better linking point
             print "    Existing vertex beyond threshold. Splitting way segment."
@@ -93,9 +101,9 @@ def linker(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max di
             print "    Ideal link point %d meters away, %d meters along segment." % (dist, pos)
             # make new vertex named wWAYdOFFSET
             new_v_name = "w%do%d" % (way, off + pos)
-            cur.execute( "INSERT INTO vertices (id, refs, geometry) VALUES (?, 1, MakePoint(?, ?, 4326))", (new_v_name, pt.x, pt.y) )
+            cur.execute( "INSERT INTO vertices (id, refs, geometry) VALUES (?, 2, MakePoint(?, ?, 4326))", (new_v_name, pt.x, pt.y) )
             # DEBUG make a new vertex to show stop location
-            cur.execute( "INSERT INTO vertices (id, refs, geometry) VALUES ('gtfs_stop', 0, MakePoint(?, ?, 4326))", (lon, lat) )
+            # cur.execute( "INSERT INTO vertices (id, refs, geometry) VALUES ('gtfs_stop', 0, MakePoint(?, ?, 4326))", (lon, lat) )
             cur.execute( "SELECT max(id) FROM way_segments" )
             (max_segid,) = cur.next()
             # make 2 new segments
@@ -108,10 +116,11 @@ def linker(osmdb, gtfsdb, split_threshold = 50, range = 0.005): # meters (max di
             # drop old segment 
             cur.execute( "DELETE FROM way_segments WHERE id = ?", (segid,) )
             print "    Link to new vertex:", new_v_name
+            gcur.execute( "INSERT INTO osm_links VALUES (?, ?)", (stopid, new_v_name) )
 
         c.commit()
+        gtfsdb.conn.commit()
         print ""
-    ### OSM edges are never stored, but both edges and vertices (for final graph) are simply built from an ordered way segment table.
     
 def make_edges(osmdb): 
     print "Converting way segments into graph edges..."
@@ -125,43 +134,57 @@ def make_edges(osmdb):
         wkt = "LINESTRING( %s )" % ( ','.join(geom) )
         id  = "w%d-%d" % (way, idx)
         cur.execute( "INSERT INTO edges (id, start_vertex, end_vertex, geometry) VALUES (?, ?, ?, LinestringFromText(?))", (id, sv, ev, wkt) )
-        print "inserted", id
-        c.commit()
+        # print "inserted", id
         
-    cur.execute( "SELECT DISTINCT way FROM way_segments" )
-    for (curr_way,) in cur.fetchall() :
-        idx = 0
-        cur.execute( "SELECT way, dist, length, start_vertex, end_vertex FROM way_segments WHERE way = ? ORDER BY dist", (curr_way,) )
-        for way, dist, length, sv, ev in cur.fetchall() :
+    last_way = -1
+    edge_length = 0
+    cur.execute( "SELECT way, dist, length, start_vertex, end_vertex FROM way_segments ORDER BY way, dist" )
+    way_count = 0
+    for way, dist, length, sv, ev in cur.fetchall() :
+        try :
             # get the segment start vertex coordinates
             cur.execute( "SELECT x(geometry), y(geometry), refs FROM vertices WHERE id = ?", (sv,) )
             slon, slat, srefs = cur.next()
             # get the segment end vertex coordinates
             cur.execute( "SELECT x(geometry), y(geometry), refs FROM vertices WHERE id = ?", (ev,) )
             elon, elat, erefs = cur.next()
-            if dist == 0 :
-                edge_sv = sv
-                edge_length = 0
-                edge_geom = ["%f %f" % (slon, slat)]
-            edge_geom.append("%f %f" % (elon, elat))
-            edge_length += length
-            if erefs > 1 :
-                insert_edge( way, idx, edge_sv, ev, edge_geom )
-                idx += 1
-                edge_sv = ev
-                edge_length = 0
-                edge_geom = ["%f %f" % (elon, elat)]
-        if edge_length > 0 :
-                insert_edge( way, idx, edge_sv, ev, edge_geom )
-                idx += 1
-                
+        except :
+            # print "error fetching info on vertices", sv, ev
+            # this is a real problem! missing vertices!
+            continue
+            
+        if way != last_way :
+            if edge_length > 0 :
+                insert_edge( last_way, idx, edge_sv, last_ev, edge_geom )
+            if last_way != -1 : 
+                # print "Inserted %d edges for way %d." % (idx, last_way)
+                way_count += 1
+                if way_count % 5000 == 0 : print "Way", way_count
+            idx = 0
+            edge_sv = sv
+            edge_length = 0
+            edge_geom = ["%f %f" % (slon, slat)]
+        edge_geom.append("%f %f" % (elon, elat))
+        edge_length += length
+        if erefs > 1 :
+            insert_edge( way, idx, edge_sv, ev, edge_geom )
+            idx += 1
+            edge_sv = ev
+            edge_length = 0
+            edge_geom = ["%f %f" % (elon, elat)]
+        last_way = way 
+        last_ev  = ev        
+
+    c.commit()
+    
     # remove all vertices with less than 2 refs
+    ### actually, OSM edges are never stored, but both edges and vertices (for final graph) are simply built from an ordered way segment table.
 
 def main(osm_db, gtfs_db): 
     
     osmdb  = OSMDB( osm_db ) # no overwrite parameter means load existing
     gtfsdb = GTFSDatabase (gtfs_db)
-    # linker (osmdb, gtfsdb)
+    #linker (osmdb, gtfsdb)
     make_edges (osmdb)
     
     print "DONE."
