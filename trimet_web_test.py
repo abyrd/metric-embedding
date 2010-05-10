@@ -22,15 +22,15 @@ SAMPLE_SIZE = 50
 SHOW_GS_ROUTE = False
 os.environ['TZ'] = 'US/Pacific'
 time.tzset()
-t0s = "Thu Apr 15 08:50:00 2010"
+t0s = "Tue May 11 08:50:00 2010"
 t0t = time.strptime(t0s)
 d0s = time.strftime('%a %b %d %Y', t0t)
 t0  = time.mktime(t0t)
 print 'search date: ', d0s
 print 'search time: ', time.ctime(t0), t0
 
-gtfsdb = GTFSDatabase  ('/home/andrew/data/pdx/trimet-2010-02-28.gtfsdb')
-gdb    = GraphDatabase ('/home/andrew/data/pdx/trimet.gsdb'  )
+gtfsdb = GTFSDatabase  ('/home/andrew/data/pdx/trimet.gtfsdb')
+gdb    = GraphDatabase ('/home/andrew/data/pdx/test.gsdb'  )
 g      = gdb.incarnate ()
 
 station_labels = [s[0] for s in gtfsdb.stops()]
