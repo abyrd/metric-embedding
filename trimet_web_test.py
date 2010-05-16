@@ -6,7 +6,6 @@
 # Please be nice and do not hit Tri-met's web server too fast!
 
 import numpy as np
-import pylab as pl
 import random
 import time
 import httplib
@@ -18,19 +17,19 @@ from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.graphdb         import GraphDatabase
 from graphserver.core            import Graph, Street, State, WalkOptions
 
-SAMPLE_SIZE = 50
-SHOW_GS_ROUTE = False
+SAMPLE_SIZE = 200
+SHOW_GS_ROUTE = True
 os.environ['TZ'] = 'US/Pacific'
 time.tzset()
-t0s = "Thu Apr 15 08:50:00 2010"
+t0s = "Mon May 17 08:50:00 2010"
 t0t = time.strptime(t0s)
 d0s = time.strftime('%a %b %d %Y', t0t)
 t0  = time.mktime(t0t)
 print 'search date: ', d0s
 print 'search time: ', time.ctime(t0), t0
 
-gtfsdb = GTFSDatabase  ('/home/andrew/data/pdx/trimet-2010-02-28.gtfsdb')
-gdb    = GraphDatabase ('/home/andrew/data/pdx/trimet.gsdb'  )
+gtfsdb = GTFSDatabase  ('/Users/andrew/devel/data/trimet.gtfsdb')
+gdb    = GraphDatabase ('/Users/andrew/devel/data/trimet.gdb'  )
 g      = gdb.incarnate ()
 
 station_labels = [s[0] for s in gtfsdb.stops()]
@@ -42,7 +41,7 @@ random.shuffle(destinations)
 pairs = zip(origins, destinations)[:SAMPLE_SIZE]
 
 wo = WalkOptions() 
-wo.max_walk = 1600 
+wo.max_walk = 2000 
 wo.walking_overage = 0.0
 wo.walking_speed = 1.0 # trimet uses 0.03 miles / 1 minute - but it uses straight line distance as well
 wo.transfer_penalty = 60 * 10
@@ -69,10 +68,7 @@ for o, d in pairs :
     except:
         print 'Graphserver search failed.'
         continue
-        
-    if SHOW_GS_ROUTE :
-        vp.narrate()
-    
+            
     print "gs:   walked %i meters, %i vehicles." % (vp.dist_walked, vp.num_transfers)
 
     tg = vp.time
@@ -92,6 +88,9 @@ for o, d in pairs :
         endtime = soup.itinerary.endtime.string
         tw = time.mktime(time.strptime(d0s + ' ' + endtime, '%a %b %d %Y %I:%M %p'))
         lastleg = soup.itinerary.find(order='end')
+        if lastleg is None :
+            print "No last leg wot."
+            continue
         if lastleg.endtime == None :
             tw += int(lastleg.duration.string) * 60
 
@@ -101,9 +100,13 @@ for o, d in pairs :
         print 'diff: %04.1f min' % diff
         residuals.append(diff)
         magnitudes.append((vp.time - t0) / 60.0)
+        if SHOW_GS_ROUTE and abs(diff) > 8 :
+            vp.narrate()
     else :
         print 'Web API search failed.' # , data
-    # use rawinput to wait for enter
+    # show route if difference is notable
+    spt.destroy()
+    # maybe use rawinput to wait for enter
     time.sleep(2)
 
 print 'Residuals, magnitudes: ', zip( residuals, magnitudes )
