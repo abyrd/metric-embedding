@@ -69,11 +69,12 @@ close_stations = {}
 for e in grid : close_stations[e[2]] = []
 for o in origins : 
     print o
-    spt = g.shortest_path_tree( o, None, State(1, t0), wo_foot )
-    for (x, y, vertex) in grid :
+    #spt = g.shortest_path_tree( o, None, State(1, t0), wo_foot )
+    #for (x, y, vertex) in grid :
         
-    spt = g.shortest_path_tree( o, None, State(1, t0), wo )
+    spt = g.shortest_path_tree( o, None, State(1, t0), wo_transit )
     if spt == None : continue
+    spt.dump_json('%s.json' % o, osmdb)
     print "saving image..."
     im = Image.new("L", (max_x, max_y))
     for (x, y, vertex) in grid :
