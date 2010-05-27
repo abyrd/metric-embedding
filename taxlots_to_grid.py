@@ -6,7 +6,8 @@ osmdb = OSMDB('/home/andrew/data/pdx/testgrid.osmdb')
 c = osmdb.conn.cursor()
 c.execute( "DROP TABLE IF EXISTS grid_pop" )
 c.execute( "CREATE TABLE grid_pop (id integer primary key, surf FLOAT, pop FLOAT)" )
-c.execute( "INSERT INTO grid_pop SELECT rowid, 0, 0 FROM grid" )
+c.execute( "SELECT AddGeometryColumn('grid_pop', 'geom', 4326, 'POINT', 2)" )
+c.execute( "INSERT INTO grid_pop SELECT rowid, 0, 0, geometry FROM grid" )
 
 # 100 meter steps at this latitude: lat 0.000900 lon 0.001279
 xstep = 0.001279
@@ -23,6 +24,7 @@ for sqft, x, y in c.fetchall() :
     ids, count = c.next()
     if count == 0 : 
         print "No gridpoints nearby."
+        c.execute( "INSERT INTO grid_pop (surf, pop, geom) VALUES (-8, 0, MakePoint(?, ?, 4326))", (x, y) )
         continue
     print x, y, sqft, count, ids    
     c.execute( "UPDATE grid_pop SET surf = surf + %f WHERE id IN (%s)" % (sqft/count, ids) )
