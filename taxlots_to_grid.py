@@ -18,15 +18,19 @@ c.execute("""select bldgsqft, x(c), y(c) from (
              from taxlots where (landuse = 'SFR' or landuse = 'MFR') and bldgsqft > 0 )""")
 
 for sqft, x, y in c.fetchall() :
-    c.execute( """SELECT group_concat(rowid), count(*) from cache_grid_geometry 
-                  WHERE  mbr = FilterMBRWithin(?, ?, ?, ?)""", 
-                  (x-xstep, y-ystep, x+xstep, y+ystep) )    
-    ids, count = c.next()
-    if count == 0 : 
-        print "No gridpoints nearby."
+    c.execute( """SELECT rowid, Distance(MakePoint(?, ?, 4326), geometry) AS d 
+                  FROM grid WHERE rowid IN (
+                  SELECT rowid FROM cache_grid_geometry 
+                  WHERE mbr = FilterMBRWithin(?, ?, ?, ?) )
+                  ORDER BY d LIMIT 1""", 
+                  (x, y, x-xstep, y-ystep, x+xstep, y+ystep) )    
+    try:
+        rowid, dist = c.next()
+    except StopIteration:
+        print "No close grid point found."
         c.execute( "INSERT INTO grid_pop (surf, pop, geom) VALUES (-8, 0, MakePoint(?, ?, 4326))", (x, y) )
-        continue
-    print x, y, sqft, count, ids    
-    c.execute( "UPDATE grid_pop SET surf = surf + %f WHERE id IN (%s)" % (sqft/count, ids) )
+    else:
+        print x, y, sqft, rowid, dist    
+        c.execute( "UPDATE grid_pop SET surf = surf + ? WHERE id = ?", (sqft, rowid) )
 
 osmdb.conn.commit()
