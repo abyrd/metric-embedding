@@ -22,6 +22,9 @@ for grpid, pop, geom, minx, miny, maxx, maxy in c.fetchall():
     else :
         if surf == 0 :
             print "Gridpoints inside block group have 0 surface on which to place %d people." % pop 
+            # spread them out
+            n = float(len(grid_ids.split(',')))
+            c.execute( "UPDATE grid_pop SET pop = pop + %f WHERE rowid IN (%s)" % (pop/n, grid_ids) )            
         else:       
             print "Distribute %d people among %f square feet: %f sqft per person." % (pop, surf, surf/pop)
             c.execute( "UPDATE grid_pop SET pop = pop + surf * %f WHERE rowid IN (%s)" % (pop/surf, grid_ids) )
