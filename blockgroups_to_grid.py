@@ -13,8 +13,8 @@ for grpid, pop, geom, minx, miny, maxx, maxy in c.fetchall():
     c.execute( """SELECT group_concat(g.rowid), sum(gp.surf) FROM grid as g, grid_pop as gp 
                   WHERE g.rowid = gp.rowid
                   AND g.rowid IN (
-                  SELECT rowid FROM cache_grid_geometry WHERE mbr = FilterMBRWithin(?, ?, ?, ?))
-                  AND within(g.geometry, ?)""", 
+                  SELECT rowid FROM cache_grid_geom_pt WHERE mbr = FilterMBRWithin(?, ?, ?, ?))
+                  AND within(g.geom_pt, ?)""", 
                   (minx, miny, maxx, maxy, geom) )
     grid_ids, surf = c.next()
     if not grid_ids :    
