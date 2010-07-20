@@ -155,26 +155,11 @@ class MDSThread(QtCore.QThread) :
 #        station_coords = npz['station_coords']
 #        grid_dim       = npz['grid_dim']
 #        matrix         = npz['matrix']
-        station_coords = self.station_coords
-        grid_dim       = self.grid_dim
-        matrix         = self.matrix
-    
-        # make numpy array to hold x*y lists of (station, dist)
-        print 'pruning nearby station lists...'        
-        nearby_stations = np.empty((grid_dim[0], grid_dim[1], self.N_NEARBY_STATIONS, 2), dtype=np.int32)        
-        nearby_stations.fill(-1) # -1 in position 0 indicates an empty list, so pre-fill the array
-        for x, row in enumerate(self.nearby_stations) :
-            for y, l in enumerate(row) :
-                # order station list by distance, and copy the N nearest into the array
-                if len(l) > 0 :
-                    l.sort(key=lambda x : x[1])
-                    #this could be done more efficiently, but it's not that slow               
-                    m = (l * self.N_NEARBY_STATIONS)[:self.N_NEARBY_STATIONS]
-                    nearby_stations[x, y] = m 
-                    # must repeat shorter lists to avoid diverging threads on the GPU
-                    # also, GPU kernel only recognizes -1 indicating empty list in position 0
-                #print x, y, l
-                #print nearby_stations[x, y]
+        station_coords  = self.station_coords
+        grid_dim        = self.grid_dim
+        matrix          = self.matrix
+        nearby_stations = self.nearby_stations    
+
         # EVERYTHING SHOULD BE IN FLOAT32 for ease of debugging. even times.
         # Matrix and others should be textures, arrays, or in constant memory, to do cacheing.
         

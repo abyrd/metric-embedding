@@ -49,7 +49,7 @@ class LaunchWindow(QtGui.QWidget):
         self.listSlider = self.createSlider('%i stations cached locally', 1, 50, 5, 15)
         self.chunkSlider = self.createSlider('Kernel chunk size %i', 50, 1000, 50, 500)
         self.imageSlider = self.createSlider('Images every %i iterations', 1, 20, 1, 1)
-        self.iterationSlider = self.createSlider('Stop after %i iterations', 1, 1000, 50, 300)
+        self.iterationSlider = self.createSlider('Stop after %i iterations', 1, 2000, 50, 300)
         self.convergeSlider = self.createSlider('Converge on maximum error %i sec', 1, 1000, 50, 300)
         
         self.stopButton = QtGui.QPushButton('&Stop')
@@ -95,20 +95,26 @@ class LaunchWindow(QtGui.QWidget):
             infile = open(str(self.filenameLabel.text()), 'rb')
             import cPickle as pickle
             s = pickle.load(infile)
-            print 'Retrieving od matrix...'
+            self.progressBar.setRange(0, 3)
+            self.progressLabel.setText('Un-pickling OD matrix...')
+            self.progressBar.setValue(1)
+            app.processEvents()
             self.matrix = np.array(pickle.load(infile), dtype=np.float32) # must be float, because cannot cast None to int32
-            print 'Retrieving grid distances...'
+            self.progressLabel.setText('Un-pickling station distance lists...')
+            self.progressBar.setValue(2)
+            app.processEvents()
             w = pickle.load(infile)
 
             n = len(s)
-            progressDialog = QtGui.QProgressDialog('Processing OD matrix and station coordinates...', 'Cancel', 0, n)
-            progressDialog.show()
+            #progressDialog = QtGui.QProgressDialog('Processing OD matrix and station coordinates...', 'Cancel', 0, n)
+            #progressDialog.show()
             # find grid dimensions
             xmax = 0
             ymax = 0
-            progressDialog.setLabelText('Finding grid dimensions...')
+            self.progressBar.setRange(0, n)
+            self.progressLabel.setText('Finding grid dimensions...')
             for i, e in enumerate(w) :
-                progressDialog.setValue(i)
+                self.progressBar.setValue(i)
                 app.processEvents()
                 for x, y, d in e :
                     if x > xmax : xmax = x            
@@ -117,16 +123,16 @@ class LaunchWindow(QtGui.QWidget):
             # account for zero-indexing of arrays
             xmax += 1
             ymax += 1
-            print 'grid is %i by %i cells.' % (xmax, ymax)
+            # print 'grid is %i by %i cells.' % (xmax, ymax)
             self.grid_dim = np.array([xmax, ymax], dtype=np.int32)
             self.station_coords = np.zeros((n, 2), dtype=np.int32)
             station_dists = np.empty(n, dtype = np.float32)
             station_dists.fill(np.inf)
             
-            progressDialog.setLabelText('Finding station coordinates and nearby stations...')
+            self.progressLabel.setText('Finding station coordinates and nearby stations...')
             self.nearby_stations = [ [[] for _ in range(ymax)] for _ in range(xmax) ]             
             for i, e in enumerate(w) :
-                progressDialog.setValue(i)
+                self.progressBar.setValue(i)
                 app.processEvents()
                 for x, y, d in e :
                     self.nearby_stations[x][y].append((i, d))
@@ -136,6 +142,8 @@ class LaunchWindow(QtGui.QWidget):
                         
             print max(station_dists)
 
+            self.progressLabel.setText('Building image of station locations...')
+            app.processEvents()
             matrixImage = QtGui.QImage(self.grid_dim[0] / 2, self.grid_dim[1] / 2, QtGui.QImage.Format_Indexed8)
             matrixImage.fill(20)
             matrixImage.setColorTable([QtGui.QColor(i, i, i).rgb() for i in range(256)])
@@ -147,10 +155,12 @@ class LaunchWindow(QtGui.QWidget):
                 matrixImage.setPixel(x+1, y,   255)    
                 matrixImage.setPixel(x+1, y+1, 255)    
             self.stationDisplayLabel.setPixmap(QtGui.QPixmap().fromImage(matrixImage))
+            self.progressLabel.setText('File loaded successfully.')
+            self.progressBar.setRange(0, 1)
+            self.progressBar.setValue(1)
             self.launchButton.setEnabled(True)
         except Exception as ex : 
             QtGui.QMessageBox.critical(self, 'Load Failed', str(ex))
-        progressDialog.hide()
         self.setEnabled(True)
 
     def makeMatrix(self) :
@@ -197,8 +207,6 @@ class LaunchWindow(QtGui.QWidget):
 #        graphWidget.hide()
     
     def launchKernel(self) :
-        # thread will send signals to its parent, so set it to self instead of app
-
         # TESTING
         #m = [[0, 2, 5],
         #     [2, 0, 4],
@@ -208,26 +216,47 @@ class LaunchWindow(QtGui.QWidget):
         #sc = [[ 8,  8],
         #      [30, 30],
         #      [30, 60]]        
-        #self.station_coords = np.array(sc, dtype=np.int32)
 
+        self.launchButton.setEnabled(False)
+        # make numpy array to hold x*y lists of (station, dist)
+        self.progressBar.setRange(0, len(self.nearby_stations))
+        self.progressLabel.setText('Pruning nearby station lists...')
+        n_nearby_stations = self.listSlider.value()
+        nearby_stations_pruned = np.empty((self.grid_dim[0], self.grid_dim[1], n_nearby_stations, 2), dtype=np.int32)        
+        nearby_stations_pruned.fill(-1) # -1 in position 0 indicates an empty list, so pre-fill the array
+        for x, row in enumerate(self.nearby_stations) :
+            self.progressBar.setValue(x)
+            app.processEvents()
+            for y, l in enumerate(row) :
+                # order station list by distance, and copy the N nearest into the array
+                if len(l) > 0 :
+                    l.sort(key=lambda x : x[1])
+                    #this could be done more efficiently, but it's not that slow               
+                    m = (l * n_nearby_stations)[:n_nearby_stations]
+                    nearby_stations_pruned[x, y] = m 
+                    # must repeat shorter lists to avoid diverging threads on the GPU
+                    # also, GPU kernel only recognizes -1 indicating empty list in position 0
+                #print x, y, l
+                #print nearby_stations[x, y]
+
+        # thread will send signals to its parent, so set it to self instead of app
         self.mdsThread = qt_mds.MDSThread(self)
         self.connect(self.mdsThread, QtCore.SIGNAL("finished()"), self.resetUI)
         self.connect(self.mdsThread, QtCore.SIGNAL("terminated()"), self.resetUI)
         self.connect(self.mdsThread, QtCore.SIGNAL("outputProgress(int, int, int, float, float)"), self.updateProgress)
         #self.connect(self.mdsThread, QtCore.SIGNAL("outputImage(QString)"), self.displayGraph)
         self.connect(self.mdsThread, QtCore.SIGNAL("outputImage(QImage, QImage)"), self.showImages)
-        self.launchButton.setEnabled(False)
         self.mdsThread.calculate(
                 str(self.filenameLabel.text()), 
                 self.matrix,
                 self.grid_dim,
                 self.station_coords,
-                self.nearby_stations,
+                nearby_stations_pruned,
                 self.dimensionSlider.value(), 
                 self.iterationSlider.value(), 
                 self.imageSlider.value(), 
                 self.chunkSlider.value(), 
-                self.listSlider.value(), 
+                n_nearby_stations, 
                 0 )
     
     def stopKernel(self) :
