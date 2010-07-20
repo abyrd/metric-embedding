@@ -144,6 +144,11 @@ __global__ void forces (
             
             @unroll @N_NEAR_STATIONS
             tt = min(tt, blk_near_dist[@I] * OBSTRUCTION / WALK_SPEED + tex2D(tex_matrix, os_idx, blk_near_idx[@I])); 
+                
+            // inaccessible stations are coded as 99999999 
+            // this is infinity for all practical purposes since the earth circumference is only 40k km
+            // if (tt >= 40000000) continue; 
+            // maybe should just set weight_here to 0 (done below)
 
             norm = 0; // Init here, just before accumulation in inner loop
 
@@ -155,7 +160,8 @@ __global__ void forces (
             // global influence scaling like gravity, relative to tt - scale adjustment according to travel time to point
             // weight_here = (tt < 120*60) * (1 - 1 / (120*60 - (tt-1)));
             // turn off weighting
-            weight_here = 1;
+            if (tt >= 40000000) weight_here = 0; 
+            else weight_here = 1;
             // global influence cutoff above T minutes
             // if (tt > 60 * 120) weight_here = 0; else weight_here = 1;
             // weight_here = 1 / (tt + 1);

@@ -59,6 +59,9 @@ max_x, max_y = osmdb.execute("SELECT max(x), max(y) FROM grid").next()
 print "Finding unique GTFS station linking points..."
 stop_vertices = [e[0] for e in gtfsdb.execute("SELECT DISTINCT osm_vertex FROM osm_links")]
 
+#test
+#stop_vertices = stop_vertices[:10]
+
 def save_image(spt, fname) :
     print "saving grid image..."
     im = Image.new("L", (max_x, max_y))
@@ -79,7 +82,9 @@ def transit((i, ov)):
     for dv in stop_vertices : 
         v = spt.get_vertex('osm-%s' % dv)
         if v is not None :
-            ret.append(int(v.best_state.time - t0))
+            s = v.best_state
+            # subtract out initial wait to get trip time, not relative arrival time
+            ret.append(int(s.time - s.initial_wait - t0))
         else :
             ret.append(None)
     #save_image(spt, '%d_%d' % (i, os.getpid()))
@@ -96,6 +101,7 @@ def walk((i, ov)):
         if v is not None :
             vp = v.best_state
             t = vp.time - t0
+            # shouldn't this be num boardings, not transfers?
             if t < 3600 and vp.num_transfers == 0 :
                 ret.append((x, y, int(t)))
     #save_image(spt, '%d_%d' % (i, os.getpid()))
@@ -107,5 +113,12 @@ p = Pool(4)
 rt = p.map(transit, enumerate(stop_vertices))
 rw = p.map(walk,    enumerate(stop_vertices))
 
+# for e in rt : print e
 
-
+# -1s request highest pickle protocol version
+# the newer binary protocols are faster and more compact
+import cPickle as pickle
+output = open('data.pkl', 'wb')
+pickle.dump( stop_vertices, output, -1 )
+pickle.dump( rt, output, -1 )
+pickle.dump( rw, output, -1 )

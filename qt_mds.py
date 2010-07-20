@@ -131,8 +131,12 @@ class MDSThread(QtCore.QThread) :
         QtCore.QThread.__init__(self, parent)
         self.exiting = False
         
-    def calculate (self, filename, dimensions, n_iterations, images_every, chunk_size, list_size, debug) :
+    def calculate (self, filename, matrix, grid_dim, station_coords, nearby_stations, dimensions, n_iterations, images_every, chunk_size, list_size, debug) :
         self.MATRIX_FILE = filename
+        self.matrix = matrix
+        self.grid_dim = grid_dim
+        self.station_coords = station_coords
+        self.nearby_stations = nearby_stations
         self.DIMENSIONS = dimensions
         self.N_ITERATIONS = n_iterations
         self.IMAGES_EVERY = images_every
@@ -146,19 +150,41 @@ class MDSThread(QtCore.QThread) :
         self.cuda_dev = cuda.Device(0)
         self.cuda_context = self.cuda_dev.make_context()
 
-        print 'Loading matrix...'
-        npz = np.load(self.MATRIX_FILE)
-        station_coords = npz['station_coords']
-        grid_dim       = npz['grid_dim']
-        matrix         = npz['matrix']
-
+#        print 'Loading matrix...'
+#        npz = np.load(self.MATRIX_FILE)
+#        station_coords = npz['station_coords']
+#        grid_dim       = npz['grid_dim']
+#        matrix         = npz['matrix']
+        station_coords = self.station_coords
+        grid_dim       = self.grid_dim
+        matrix         = self.matrix
+    
+        # make numpy array to hold x*y lists of (station, dist)
+        print 'pruning nearby station lists...'        
+        nearby_stations = np.empty((grid_dim[0], grid_dim[1], self.N_NEARBY_STATIONS, 2), dtype=np.int32)        
+        nearby_stations.fill(-1) # -1 in position 0 indicates an empty list, so pre-fill the array
+        for x, row in enumerate(self.nearby_stations) :
+            for y, l in enumerate(row) :
+                # order station list by distance, and copy the N nearest into the array
+                if len(l) > 0 :
+                    l.sort(key=lambda x : x[1])
+                    #this could be done more efficiently, but it's not that slow               
+                    m = (l * self.N_NEARBY_STATIONS)[:self.N_NEARBY_STATIONS]
+                    nearby_stations[x, y] = m 
+                    # must repeat shorter lists to avoid diverging threads on the GPU
+                    # also, GPU kernel only recognizes -1 indicating empty list in position 0
+                #print x, y, l
+                #print nearby_stations[x, y]
         # EVERYTHING SHOULD BE IN FLOAT32 for ease of debugging. even times.
         # Matrix and others should be textures, arrays, or in constant memory, to do cacheing.
-        # As it is, I'm doing explicit cacheing.
-
         
-        print np.where(matrix == np.inf)
-        matrix[matrix == np.inf] = 0
+        # make matrix symmetric before converting to int32. this avoids halving the pseudo-infinity value.
+        matrix = (matrix + matrix.T) / 2
+       #print np.where(matrix == np.inf)
+        matrix[matrix == np.inf] = 99999999
+        # nan == nan is False because any operation involving nan is False !
+        # must use specific isnan function. however, inf works like a normal number.
+        matrix[np.isnan(matrix)] = 99999999
         #matrix[matrix >= 60 * 60 * 3] = 0
         matrix = matrix.astype(np.int32)
         #matrix += 60 * 5
@@ -168,9 +194,8 @@ class MDSThread(QtCore.QThread) :
         # force OD matrix symmetry for test
         # THIS was responsible for the coordinate drift!!!
         # need to symmetrize it before copy to device
-        matrix = (matrix + matrix.T) / 2
-
-        print matrix
+#        matrix = (matrix + matrix.T) / 2
+#        print matrix
 
         #print np.any(matrix == np.nan)
         #print np.any(matrix == np.inf)
@@ -235,7 +260,11 @@ class MDSThread(QtCore.QThread) :
         forces_gpu        = gpuarray.zeros( (int(max_x), int(max_y), self.DIMENSIONS), dtype=np.float32 )             # 3D float32 accumulate forces over one timestep
         weights_gpu       = gpuarray.zeros( (int(max_x), int(max_y)),                  dtype=np.float32 )             # 2D float32 cell error accumulation
         errors_gpu        = gpuarray.zeros( (int(max_x), int(max_y)),                  dtype=np.float32 )             # 2D float32 cell error accumulation
-        near_stations_gpu = gpuarray.zeros( (int(max_x), int(max_y), self.N_NEARBY_STATIONS, 2), dtype=np.int32)
+        #near_stations_gpu = gpuarray.zeros( (int(max_x), int(max_y), self.N_NEARBY_STATIONS, 2), dtype=np.int32)
+        # instead of using synthetic distances, use the network distance near stations lists.         
+        # rather than copying the array over to the GPU then binding to external texref, 
+        # could just use matrix_to_texref, but this function only seems to understand 2d arrays
+        near_stations_gpu = gpuarray.to_gpu( nearby_stations )
 
         debug_gpu     = gpuarray.zeros( n_gridpoints, dtype = np.int32 )
         debug_img_gpu = gpuarray.zeros_like( errors_gpu )
@@ -262,15 +291,17 @@ class MDSThread(QtCore.QThread) :
 
         cuda.matrix_to_texref(matrix, matrix_texref, order="F") # copy directly to device with texref - made for 2D x 1channel textures
         cuda.matrix_to_texref(station_coords_int, station_coords_texref, order="F") # fortran ordering, because we will be accessing with texND() instead of C-style indices
+        # again, matrix_to_texref is not used here because that function only understands 2D arrays
         near_stations_gpu.bind_to_texref_ext(near_stations_texref)
 
         # note, cuda.In and cuda.Out are from the perspective of the KERNEL not the host app!
-        stations_kernel(near_stations_gpu, max_x, max_y, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
+        # stations_kernel disabled since true network distances are now being used        
+        #stations_kernel(near_stations_gpu, max_x, max_y, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
         # autoinit.context.synchronize()
-        self.cuda_context.synchronize()
+        #self.cuda_context.synchronize() 
         
-        print "Near stations list:"
-        print near_stations_gpu
+        #print "Near stations list:"
+        #print near_stations_gpu
         
         #sys.exit()
         
@@ -298,9 +329,10 @@ class MDSThread(QtCore.QThread) :
                 #autoinit.context.synchronize()
                 self.cuda_context.synchronize()
                 
-                print coords_gpu.get()[400:410,350:360]
-                print forces_gpu.get()[400:410,350:360]
-                print weights_gpu.get()[400:410,350:360]
+                # show a sample of the results
+                #print coords_gpu.get() [00:10,00:10]
+                #print forces_gpu.get() [00:10,00:10]
+                #print weights_gpu.get()[00:10,00:10]
                 time.sleep(0.05)  # let the OS GUI use the GPU for a bit.
                 
                 #pl.imshow( (debug_img_gpu.get() / 60.0).T, cmap=mymap, origin='bottom')#, vmin=0, vmax=100 )
@@ -309,9 +341,9 @@ class MDSThread(QtCore.QThread) :
                 #pl.savefig( 'img/debug%03d.png' % n_pass )
                 #pl.close()
 
-                integrate_kernel(max_x, max_y, coords_gpu, forces_gpu, weights_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
-                #autoinit.context.synchronize()
-                self.cuda_context.synchronize()
+# why was this indented? shouldn't it be integrated only after all stations are taken into account?
+            integrate_kernel(max_x, max_y, coords_gpu, forces_gpu, weights_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
+            self.cuda_context.synchronize()
 
             print self.IMAGES_EVERY
             if (self.IMAGES_EVERY > 0) and (n_pass % self.IMAGES_EVERY == 0) :

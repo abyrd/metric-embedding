@@ -46,7 +46,7 @@ class LaunchWindow(QtGui.QWidget):
         self.lytRow += 1   
         self.marginSlider = self.createSlider('Map margin %im', 500, 10000, 500, 5000)
         self.dimensionSlider = self.createSlider('Target space dimensionality %i', 1, 8, 1, 4)
-        self.listSlider = self.createSlider('%i stations cached locally', 5, 50, 5, 15)
+        self.listSlider = self.createSlider('%i stations cached locally', 1, 50, 5, 15)
         self.chunkSlider = self.createSlider('Kernel chunk size %i', 50, 1000, 50, 500)
         self.imageSlider = self.createSlider('Images every %i iterations', 1, 20, 1, 1)
         self.iterationSlider = self.createSlider('Stop after %i iterations', 1, 1000, 50, 300)
@@ -58,7 +58,8 @@ class LaunchWindow(QtGui.QWidget):
 
         self.launchButton = QtGui.QPushButton('&Launch MDS Kernel')
         QtCore.QObject.connect(self.launchButton, QtCore.SIGNAL("clicked()"), self.launchKernel)
-        self.launchButton.setEnabled(False)
+        # commented out for testing only        
+        #self.launchButton.setEnabled(False)
         self.mainLayout.addWidget(self.launchButton, self.lytRow, 1, 1, 2)
             
         self.lytRow += 1        
@@ -87,31 +88,68 @@ class LaunchWindow(QtGui.QWidget):
     def chooseFile(self, filename = None) :
         self.setEnabled(False)
         if filename == None :
-            self.filenameLabel.setText(QtGui.QFileDialog.getOpenFileName(self, 'Open OD Matrix', './data', 'NumPy Matrices (*.npz)'))
+            self.filenameLabel.setText(QtGui.QFileDialog.getOpenFileName(self, 'Open OD Matrix', './data', 'Python Pickles (*.pkl)'))
         else :
             self.filenameLabel.setText(filename)
-        progressDialog = QtGui.QProgressDialog('Loading OD matrix and station coordinates...', 'Cancel', 0, 2)
-        progressDialog.show()
-        try:
-            npz = np.load(str(self.filenameLabel.text()))
-            self.station_coords = npz['station_coords']
-            self.grid_dim       = npz['grid_dim']
-            progressDialog.setValue(1)
-            app.processEvents()
-            self.matrix         = npz['matrix'] #.astype(np.int32)
+        try :
+            infile = open(str(self.filenameLabel.text()), 'rb')
+            import cPickle as pickle
+            s = pickle.load(infile)
+            print 'Retrieving od matrix...'
+            self.matrix = np.array(pickle.load(infile), dtype=np.float32) # must be float, because cannot cast None to int32
+            print 'Retrieving grid distances...'
+            w = pickle.load(infile)
+
+            n = len(s)
+            progressDialog = QtGui.QProgressDialog('Processing OD matrix and station coordinates...', 'Cancel', 0, n)
+            progressDialog.show()
+            # find grid dimensions
+            xmax = 0
+            ymax = 0
+            progressDialog.setLabelText('Finding grid dimensions...')
+            for i, e in enumerate(w) :
+                progressDialog.setValue(i)
+                app.processEvents()
+                for x, y, d in e :
+                    if x > xmax : xmax = x            
+                    if y > ymax : ymax = y
+            
+            # account for zero-indexing of arrays
+            xmax += 1
+            ymax += 1
+            print 'grid is %i by %i cells.' % (xmax, ymax)
+            self.grid_dim = np.array([xmax, ymax], dtype=np.int32)
+            self.station_coords = np.zeros((n, 2), dtype=np.int32)
+            station_dists = np.empty(n, dtype = np.float32)
+            station_dists.fill(np.inf)
+            
+            progressDialog.setLabelText('Finding station coordinates and nearby stations...')
+            self.nearby_stations = [ [[] for _ in range(ymax)] for _ in range(xmax) ]             
+            for i, e in enumerate(w) :
+                progressDialog.setValue(i)
+                app.processEvents()
+                for x, y, d in e :
+                    self.nearby_stations[x][y].append((i, d))
+                    if d < station_dists[i] : 
+                        self.station_coords[i] = (x, y)
+                        station_dists[i] = d
+                        
+            print max(station_dists)
+
             matrixImage = QtGui.QImage(self.grid_dim[0] / 2, self.grid_dim[1] / 2, QtGui.QImage.Format_Indexed8)
             matrixImage.fill(20)
             matrixImage.setColorTable([QtGui.QColor(i, i, i).rgb() for i in range(256)])
-#            for coord in self.station_coords :
-#                x = coord[0]/2
-#                y = coord[1]/2
-#                matrixImage.setPixel(x,   y,   255)    
-#                matrixImage.setPixel(x,   y+1, 255)    
-#                matrixImage.setPixel(x+1, y,   255)    
-#                matrixImage.setPixel(x+1, y+1, 255)    
+            for coord in self.station_coords :
+                x = coord[0] / 2
+                y = (ymax - coord[1]) / 2
+                matrixImage.setPixel(x,   y,   255)    
+                matrixImage.setPixel(x,   y+1, 255)    
+                matrixImage.setPixel(x+1, y,   255)    
+                matrixImage.setPixel(x+1, y+1, 255)    
             self.stationDisplayLabel.setPixmap(QtGui.QPixmap().fromImage(matrixImage))
             self.launchButton.setEnabled(True)
-        except Exception as ex : QtGui.QMessageBox.critical(self, 'Laod Failed', str(ex))
+        except Exception as ex : 
+            QtGui.QMessageBox.critical(self, 'Load Failed', str(ex))
         progressDialog.hide()
         self.setEnabled(True)
 
@@ -160,6 +198,18 @@ class LaunchWindow(QtGui.QWidget):
     
     def launchKernel(self) :
         # thread will send signals to its parent, so set it to self instead of app
+
+        # TESTING
+        #m = [[0, 2, 5],
+        #     [2, 0, 4],
+        #     [5, 4, 0]]
+        #self.matrix   = np.array(m, dtype = np.int32)
+        #self.grid_dim = np.array([100, 100], dtype=np.int32)
+        #sc = [[ 8,  8],
+        #      [30, 30],
+        #      [30, 60]]        
+        #self.station_coords = np.array(sc, dtype=np.int32)
+
         self.mdsThread = qt_mds.MDSThread(self)
         self.connect(self.mdsThread, QtCore.SIGNAL("finished()"), self.resetUI)
         self.connect(self.mdsThread, QtCore.SIGNAL("terminated()"), self.resetUI)
@@ -169,6 +219,10 @@ class LaunchWindow(QtGui.QWidget):
         self.launchButton.setEnabled(False)
         self.mdsThread.calculate(
                 str(self.filenameLabel.text()), 
+                self.matrix,
+                self.grid_dim,
+                self.station_coords,
+                self.nearby_stations,
                 self.dimensionSlider.value(), 
                 self.iterationSlider.value(), 
                 self.imageSlider.value(), 
