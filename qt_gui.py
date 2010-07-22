@@ -45,7 +45,7 @@ class LaunchWindow(QtGui.QWidget):
             
         self.lytRow += 1   
         self.marginSlider = self.createSlider('Map margin %im', 500, 10000, 500, 5000)
-        self.dimensionSlider = self.createSlider('Target space dimensionality %i', 1, 8, 1, 4)
+        self.dimensionSlider = self.createSlider('Target space dimensionality %i', 1, 20, 1, 4)
         self.listSlider = self.createSlider('%i stations cached locally', 1, 50, 5, 15)
         self.chunkSlider = self.createSlider('Kernel chunk size %i', 50, 1000, 50, 500)
         self.imageSlider = self.createSlider('Images every %i iterations', 1, 20, 1, 1)
@@ -224,12 +224,14 @@ class LaunchWindow(QtGui.QWidget):
         n_nearby_stations = self.listSlider.value()
         nearby_stations_pruned = np.empty((self.grid_dim[0], self.grid_dim[1], n_nearby_stations, 2), dtype=np.int32)        
         nearby_stations_pruned.fill(-1) # -1 in position 0 indicates an empty list, so pre-fill the array
+        active_cells = set() # keep track of which cells are actually accessible
         for x, row in enumerate(self.nearby_stations) :
             self.progressBar.setValue(x)
             app.processEvents()
             for y, l in enumerate(row) :
                 # order station list by distance, and copy the N nearest into the array
                 if len(l) > 0 :
+                    active_cells.add((x, y))
                     l.sort(key=lambda x : x[1])
                     #this could be done more efficiently, but it's not that slow               
                     m = (l * n_nearby_stations)[:n_nearby_stations]
@@ -252,6 +254,7 @@ class LaunchWindow(QtGui.QWidget):
                 self.grid_dim,
                 self.station_coords,
                 nearby_stations_pruned,
+                active_cells,
                 self.dimensionSlider.value(), 
                 self.iterationSlider.value(), 
                 self.imageSlider.value(), 

@@ -84,6 +84,7 @@ __global__ void forces (
     int   s_high,
     int   max_x,
     int   max_y,
+    int   *active_cells, // currently unused
     float *glb_coords, // make them a texture? test performance - this is an optimisation.
     float *glb_forces,
     float *glb_weights,
@@ -143,7 +144,7 @@ __global__ void forces (
             // might matrix times be flipped, depending on element ordering conventions?
             
             @unroll @N_NEAR_STATIONS
-            tt = min(tt, blk_near_dist[@I] * OBSTRUCTION / WALK_SPEED + tex2D(tex_matrix, os_idx, blk_near_idx[@I])); 
+            tt = min(tt, blk_near_dist[@I] + tex2D(tex_matrix, os_idx, blk_near_idx[@I])); // obstruction and walk speed removed
                 
             // inaccessible stations are coded as 99999999 
             // this is infinity for all practical purposes since the earth circumference is only 40k km
@@ -171,7 +172,7 @@ __global__ void forces (
                 @unroll @DIM                                          // Avoid propagating nans through division by zero. Force should be 0, so add skip this step / add nothing.
                 force[@I] += ((vector[@I] / norm) * adjust * weight_here);            // Find a unit vector, scale it by the desired 'correct' time-space distance. (weighted)
                 // why is this in the if block?
-                error_here = pow(abs(adjust) * weight_here, 2);                                    // Accumulate error to each texel, so we can observe progress as the program runs. (weighted)
+                error_here = abs(adjust) * weight_here;                                    // Accumulate error to each texel, so we can observe progress as the program runs. (weighted)
                 error += error_here;                                        // now using rms error - should weight be inside or outside square? for now it's always 1.
                 error_max = max(error_max, error_here);
             }

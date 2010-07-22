@@ -12,6 +12,7 @@ import geotools
 import math
 import pyproj
 import sys
+import random
 #import png
 
 import pycuda.driver   as cuda
@@ -131,12 +132,13 @@ class MDSThread(QtCore.QThread) :
         QtCore.QThread.__init__(self, parent)
         self.exiting = False
         
-    def calculate (self, filename, matrix, grid_dim, station_coords, nearby_stations, dimensions, n_iterations, images_every, chunk_size, list_size, debug) :
+    def calculate (self, filename, matrix, grid_dim, station_coords, nearby_stations, active_cells, dimensions, n_iterations, images_every, chunk_size, list_size, debug) :
         self.MATRIX_FILE = filename
         self.matrix = matrix
         self.grid_dim = grid_dim
         self.station_coords = station_coords
         self.nearby_stations = nearby_stations
+        self.active_cells = active_cells
         self.DIMENSIONS = dimensions
         self.N_ITERATIONS = n_iterations
         self.IMAGES_EVERY = images_every
@@ -262,7 +264,7 @@ class MDSThread(QtCore.QThread) :
         replacements = [( 'N_NEAR_STATIONS', self.N_NEARBY_STATIONS ),
                         ( 'N_STATIONS',      n_stations ),
                         ( 'DIM',             self.DIMENSIONS)]
-        src = preprocess_cu('unified_mds.cu', replacements)
+        src = preprocess_cu('unified_mds_stochastic.cu', replacements)
         #print src
         mod = SourceModule(src, options=["--ptxas-options=-v"])
         stations_kernel  = mod.get_function("stations"  )
@@ -293,12 +295,17 @@ class MDSThread(QtCore.QThread) :
         print "\n----CALCULATION----"
         t_start = time.time()
         n_pass = 0
+        active_cells = list(self.active_cells) # make a working list of map cells that are accessible
+        print "N active cells:", len(active_cells)
         while (n_pass < self.N_ITERATIONS) :
             n_pass += 1    
+            random.shuffle(active_cells)
+            active_cells_gpu = gpuarray.to_gpu(np.array(active_cells).astype(np.int32))
             # Pay attention to grid sizes when testing: if you don't run the integrator on the coordinates connected to stations, 
             # they don't move... so the whole thing stabilizes in a couple of cycles.    
             # Stations are worked on in blocks to avoid locking up the GPU with one giant kernel.
-            for subset_low in range(0, n_stations, self.STATION_BLOCK_SIZE) :
+#            for subset_low in range(0, n_stations, self.STATION_BLOCK_SIZE) :
+            for subset_low in range(1) : # changed to try integrating more often
                 subset_high = subset_low + self.STATION_BLOCK_SIZE
                 if subset_high > n_stations : subset_high = n_stations
                 sys.stdout.write( "\rpass %03i / station %04i of %04i / total runtime %03.1f min " % (n_pass, subset_high, n_stations, (time.time() - t_start) / 60.0) )
@@ -310,7 +317,7 @@ class MDSThread(QtCore.QThread) :
                 # adding texrefs in kernel call seems to change nothing, leaving them out.
                 # max_x and max_y could be #defined in kernel source, along with STATION_BLOCK_SIZE 
 
-                forces_kernel(np.int32(n_stations), np.int32(subset_low), np.int32(subset_high), max_x, max_y, coords_gpu, forces_gpu, weights_gpu, errors_gpu, debug_gpu, debug_img_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)
+                forces_kernel(np.int32(n_stations), np.int32(subset_low), np.int32(subset_high), max_x, max_y, active_cells_gpu, coords_gpu, forces_gpu, weights_gpu, errors_gpu, debug_gpu, debug_img_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)
                 #autoinit.context.synchronize()
                 self.cuda_context.synchronize()
                 
@@ -330,7 +337,6 @@ class MDSThread(QtCore.QThread) :
             integrate_kernel(max_x, max_y, coords_gpu, forces_gpu, weights_gpu, block=CUDA_BLOCK_SHAPE, grid=cuda_grid_shape)    
             self.cuda_context.synchronize()
 
-            print self.IMAGES_EVERY
             if (self.IMAGES_EVERY > 0) and (n_pass % self.IMAGES_EVERY == 0) :
                 #print 'Kernel debug output:'
                 #print debug_gpu
@@ -370,7 +376,10 @@ class MDSThread(QtCore.QThread) :
                 np.clip(velocities, 0, 255, velocities)  
                 velImage = numpy2qimage(velocities.astype(np.uint8)).transformed(QtGui.QMatrix().rotate(-90))
                 
-                errors = np.sqrt(errors_gpu.get() / weights_gpu.get()) 
+#                errors = np.sqrt(errors_gpu.get() / weights_gpu.get())
+                e = np.sum(np.nan_to_num(errors_gpu.get())) / np.sum(np.nan_to_num(weights_gpu.get()))
+                print "average error (sec) over all active cells:", e
+                errors = errors_gpu.get() / weights_gpu.get() # average instead of RMS error 
                 errors /= 60.
                 errors /= 15. # out of 15 min range
                 errors *= 255
