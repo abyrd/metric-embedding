@@ -17,19 +17,19 @@ def copy_relevant_elements( min_graph, full_graph ) :
     seen = {}
     for n, v in enumerate(full_graph.vertices) :
         if n % 10000 == 0 : print 'vertex %d' % (n)
-        #if v.label[:4] == 'psv-' : continue
+        if v.label[:4] == 'psv-' : continue
         for e in v.outgoing :
             cn = e.payload.__class__.__name__
             seen[cn] = 1
             if cn == 'Street' :
                 t = e.payload.length # divided by speed, here implicily 1 m/sec
-            elif cn ==  'Link':
+            elif cn == 'Link':
                 t = 0 # sec
-            elif cn ==  'TripBoard':
-                t = 0 # sec
-            elif cn ==  'TripAlight':
-                t = 0 # sec
-            elif cn ==  'Crossing':
+            elif cn == 'TripBoard':
+                continue
+            elif cn == 'TripAlight':
+                continue
+            elif cn == 'Crossing':
                 #print "ignoring crossing:", e.from_v.label, e.to_v.label
                 continue
             else :

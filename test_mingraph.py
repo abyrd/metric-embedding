@@ -13,25 +13,29 @@ import sys, time, os
 from optparse import OptionParser         
 
 if __name__=='__main__':
-    usage = """usage: python zzzz.py <graph_database> <assist_graph_database> <osm_database>"""
+    usage = """usage: python zzzz.py <graph_database> <assist_graph_database> <osm_database> <gtfs_database>"""
     parser = OptionParser(usage=usage)
     (options, args) = parser.parse_args()
-    if len(args) != 3:
+    if len(args) != 4:
         parser.print_help()
         exit(-1)
         
     graph_db = args[0]
     assist_graph_db = args[1]
     osm_db  = args[2]    
+    gtfs_db = args[3]    
     graphdb = GraphDatabase( graph_db )
     assistgraphdb = GraphDatabase( assist_graph_db )
     osmdb = OSMDB( osm_db )
+    gtfsdb = GTFSDatabase( gtfs_db )
     g = graphdb.incarnate()
     ag = assistgraphdb.incarnate() 
 
     nodes = {}
     for id, tags, lat, lon, endnode_refs in osmdb.nodes():
-        nodes[id] = (lat, lon)
+        nodes['osm-' + id] = (lat, lon)
+    for id, name, lat, lon in gtfsdb.stops():
+        nodes['sta-' + id] = (lat, lon)
 
     os.environ['TZ'] = 'US/Pacific'
     time.tzset()
@@ -50,20 +54,40 @@ if __name__=='__main__':
     wo.walking_reluctance = 1.0
     wo.max_transfers = 4
 
-    orig = 'osm-40530493' #east side
-    dest = 'osm-40542000' #west side
+    orig = 'sta-6169' #city 
+    dest = 'sta-13070' #to suburb
     assist_spt = ag.shortest_path_tree(dest, None, State(1, 0))
-    #spt = g.shortest_path_tree_assist(assist_spt, orig, dest, State(1, t0), wo)
-    spt = g.shortest_path_tree(orig, dest, State(1, t0), wo)
-    print 'number of vertices in final spt:', len(spt.vertices)
-    for v in spt.vertices:
-        vl = v.label
-        if vl[:4] == 'osm-':
+    spt_a = g.shortest_path_tree_assist(assist_spt, orig, dest, State(1, t0), wo)
+    spt_b = g.shortest_path_tree(orig, dest, State(1, t0), wo)
+    for spt in [spt_a, spt_b]:
+        print '-----search and path-----'    
+        print 'number of vertices in spt:', len(spt.vertices)
+        p = spt.path(dest)
+        if p == None:
+            print "DESTINATION NOT REACHED."
+            sys.exit(0)
+        
+        vertices, edges = p
+        for i in range(len(vertices)):
+            try:
+                print vertices[i]
+                print vertices[i].state
+                print edges[i]
+            except:
+                pass
+                
+        print '-----settled vertices-----'
+        for v in spt.vertices:
+            if len(v.outgoing) == 0 : continue
+            vl = v.label
+            #if vl[:4] == 'osm-' :
             av = assist_spt.get_vertex(vl)
-            c = nodes[vl[4:]]
+            if vl in nodes:
+                c = nodes[vl]
+            else:
+                continue
             t = (v.state.time - t0) / 60.0
             at = (av.state.time) / 60.0
             if t > 90 : t = 91
             if at > 90 : at = 91
             print '%s, %f, %f, %f, %f' % (vl, c[0], c[1], t, at)
-    sys.exit(0)    
