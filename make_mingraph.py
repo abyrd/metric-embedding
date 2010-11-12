@@ -44,18 +44,26 @@ def copy_relevant_elements( min_graph, full_graph ) :
             
 def add_min_transit(graph, gtfsdb) :
     VPREFIX = 'sta-'
+    HALF_TRANSFER_COST = 3 * 60
     print 'ANALYZING'
     best_times = {}
-    r = gtfsdb.execute('SELECT DISTINCT trip_id FROM trips')
-    trip_ids = [t for t, in r]
-    n_trips = len(trip_ids)
-    for n, trip_id in enumerate(trip_ids) :
+    trips = list(gtfsdb.execute('SELECT DISTINCT trip_id, route_id FROM trips'))
+    n_trips = len(trips)
+    for n, (trip_id, route_id) in enumerate(trips) :
         if n % 1000 == 0 : print "TRIP %d/%d" % (n, n_trips)
         #if n > 1000 : break
         
+        stop_times = []
         r = gtfsdb.execute('SELECT stop_id, arrival_time, departure_time FROM stop_times WHERE trip_id == %s ORDER BY stop_sequence' % trip_id)
-        last_sid, last_arv, last_dep = r.next()
         for sid, arv, dep in r :
+            rsid = sid + '_r' + route_id
+            graph.add_vertex(VPREFIX + rsid)
+            best_times[(rsid, sid)] = HALF_TRANSFER_COST
+            best_times[(sid, rsid)] = HALF_TRANSFER_COST
+            stop_times.append((rsid, arv, dep))
+            
+        last_sid, last_arv, last_dep = stop_times[0]
+        for sid, arv, dep in stop_times[1:] :
             pair1 = (last_sid, sid)
             pair2 = (sid, last_sid)
             t = arv - last_dep
@@ -76,6 +84,7 @@ def add_min_transit(graph, gtfsdb) :
             last_sid, last_dep = sid, dep
     print 'ADDING'
     n_edges = len(best_times)
+    print best_times
     for n, ((v1, v2), t) in enumerate(best_times.iteritems()) :
         if n % 1000 == 0 : print "EDGE %d/%d" % (n, n_edges)
         v1 = VPREFIX + v1

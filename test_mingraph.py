@@ -50,12 +50,12 @@ if __name__=='__main__':
     wo.max_walk = 2000 
     wo.walking_overage = 0.0
     wo.walking_speed = 1.0 
-    wo.transfer_penalty = 60 * 5
+    wo.transfer_penalty = 60 * 6
     wo.walking_reluctance = 1.0
     wo.max_transfers = 4
 
-    orig = 'sta-6169' #city 
-    dest = 'sta-13070' #to suburb
+    orig = 'osm-37476896' #wes 
+    dest = 'sta-2575' #to eas
     assist_spt = ag.shortest_path_tree(dest, None, State(1, 0))
     spt_a = g.shortest_path_tree_assist(assist_spt, orig, dest, State(1, t0), wo)
     spt_b = g.shortest_path_tree(orig, dest, State(1, t0), wo)
@@ -85,7 +85,10 @@ if __name__=='__main__':
             if vl in nodes:
                 c = nodes[vl]
             else:
-                continue
+                try:
+                    c = nodes[vl.split('_r')[0]]
+                except KeyError:
+                    continue
             t = (v.state.time - t0) / 60.0
             at = (av.state.time) / 60.0
             if t > 90 : t = 91
