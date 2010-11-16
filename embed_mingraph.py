@@ -27,7 +27,7 @@ if __name__=='__main__':
     assistgraphdb = GraphDatabase( assist_graph_db )
     ag = assistgraphdb.incarnate() 
 
-    v = ag.vertices
+    v = list(ag.vertices)
     e = ag.edges
     nv = len(v)
     ne = len(e)
@@ -42,21 +42,20 @@ if __name__=='__main__':
     ea.fill(-1)
     wa.fill(np.inf)
 
-    i = 0
-    for u in v :
+    for i, u in enumerate(v) :
         vl[u.label] = i
-        i += 1
+        #vi[i] = u.label #exactly the same as v
 
     i = 0
     for u in v :
         j = vl[u.label]
         va[j] = i        
-        for d in v.outgoing :
-            ea[i] = vl[d.tov]  
+        for d in u.outgoing :
+            ea[i] = vl[d.to_v.label]  
             wa[i] = d.payload.seconds
-            j += 1
+            i += 1
 
-    print vl
+    print nv, ne
     print va
     print ea
     print wa

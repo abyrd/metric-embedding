@@ -39,7 +39,7 @@ if __name__=='__main__':
 
     os.environ['TZ'] = 'US/Pacific'
     time.tzset()
-    t0s = "Thu Jul 01 08:50:00 2010"
+    t0s = "Tue Nov 16 07:50:30 2010"
     t0t = time.strptime(t0s)
     d0s = time.strftime('%a %b %d %Y', t0t)
     t0  = time.mktime(t0t)
