@@ -1,6 +1,7 @@
 // CUDA kernels for embedding shortest path metric into normed vector space
 
-// calculate all pairs shortest path
+// Calculate all pairs shortest path.
+// after Okuyama, Ino, and Hagihara 2008.
 __global__ void scatter (int *vertex, int *edge, int *weight, int *cost, int *modify) {
     int fromv_tindex = blockIdx.x + blockDim.x * threadIdx.x; // damn fortran ordering
     if ( !modify[fromv_tindex] ) return;  // kill thread if this vertex was not changed in the last pass
@@ -17,7 +18,7 @@ __global__ void scatter (int *vertex, int *edge, int *weight, int *cost, int *mo
     }
 }
 
-// accumulate forces proportional to embeding error
+// accumulate forces proportional to embedding error
 // (each block should work on blockdim.x different origins, randomly)
 __global__ void force (float *coord, float *force, int *cost) {
     int tindex = blockIdx.x + blockDim.x * threadIdx.x; // damn fortran ordering
