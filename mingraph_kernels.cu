@@ -1,6 +1,7 @@
-// CUDA kernels for calculating all pairs shortest path
+// CUDA kernels for embedding shortest path metric into normed vector space
 
-__global__ void scatter (int n_vert, int *vertex, int *edge, int *weight, int *cost, int *modify) {
+// calculate all pairs shortest path
+__global__ void scatter (int *vertex, int *edge, int *weight, int *cost, int *modify) {
     int fromv_tindex = blockIdx.x + blockDim.x * threadIdx.x; // damn fortran ordering
     if ( !modify[fromv_tindex] ) return;  // kill thread if this vertex was not changed in the last pass
     int fromv_cost = cost[fromv_tindex];  // get current cost for this vertex
@@ -16,3 +17,27 @@ __global__ void scatter (int n_vert, int *vertex, int *edge, int *weight, int *c
     }
 }
 
+// accumulate forces proportional to embeding error
+// (each block should work on blockdim.x different origins, randomly)
+__global__ void force (float *coord, float *force, int *cost) {
+    int tindex = blockIdx.x + blockDim.x * threadIdx.x; // damn fortran ordering
+    int tdindex = tindex * D;
+    float dist = 0;
+    float vector[D];
+    for (int d = 0; d < D; d++) {
+        vector[d] = (coord[tdindex + d] - ???);
+        dist += abs(vector[d]); // l1 norm
+    }
+    if (dist == 0) return; // avoid division by zero when points are superimposed
+    float adjust = cost[tindex] / dist - 1;
+    for (int d = 0; d < D; d++) force[tdindex + d] += adjust * vector[d];    
+}
+
+// shift embedded points according to forces, then reset forces
+__global__ void integrate (float *coord, float *force) {
+    int tdindex = D * (blockIdx.x + blockDim.x * threadIdx.x); // damn fortran ordering
+    for (int i = tdindex; i < tdindex + D; i++) {
+        coord[i] += force[i] / blockDim.x; // push points around
+        force[i] = 0; // reset force to zero
+    }
+}
