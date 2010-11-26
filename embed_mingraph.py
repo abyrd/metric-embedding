@@ -7,11 +7,11 @@
 # Make an edge-list representation in arrays.
 # Iteratively improve an embedding of this metric into an L1-normed real vector space.
  
-from graphserver.core import Graph, ElapseTime, State, WalkOptions
+from graphserver.core import Graph, ElapseTime, State, WalkOptions, VertexNotFoundError
 from graphserver.graphdb import GraphDatabase
 from graphserver.ext.gtfs.gtfsdb import GTFSDatabase
 from graphserver.ext.osm.osmdb import OSMDB
-import sys, time, os
+import sys, time, os, random
 from optparse import OptionParser         
 import numpy as np
 
@@ -21,44 +21,35 @@ from   pycuda.compiler import SourceModule
 import pycuda.gpuarray as gpuarray
 import math
 
-def synthetic(X, Y) :
+def net(X, Y) :
     g = Graph()
     edges = []
     fs = '%i_%i'
     for x in range(X):
         for y in range(Y):
-            o  = fs % (x, y)
-            d1 = fs % (x, y-1) 
-            d2 = fs % (x, y+1) 
-            d3 = fs % (x-1, y) 
-            d4 = fs % (x+1, y) 
-            edges.append((o, d1))
-            edges.append((o, d2))
-            edges.append((o, d3))
-            edges.append((o, d4))
-    for o, d in edges:
-        g.add_vertex(o)
-        g.add_vertex(d)
-        g.add_edge(o, d, ElapseTime(1))
-    return g
-
-def net(x, y) :
-    g = Graph()
-    edges = []
-    fs = '%i_%i'
-    for x0 in range(x):
-        for y0 in range(y):
-            for x1 in range(x):
-                for y1 in range(y):
-                    if x0 == x1 and y0 == y1 : continue
-                    dx = 10*(x1-x0)
-                    dy = 10*(y1-y0)
-                    d = math.sqrt(dx*dx + dy*dy)
-                    l0 = fs % (x0, y0)
-                    l1 = fs % (x1, y1)
-                    g.add_vertex(l0)
-                    g.add_vertex(l1)
-                    g.add_edge(l0, l1, ElapseTime(int(d)))
+            g.add_vertex(fs % (x,y))
+            o = (x, y)
+            d = (x, y-1) 
+            edges.append((o, d, 3))
+            d = (x, y+1) 
+            edges.append((o, d, 3))
+            d = (x-1, y) 
+            edges.append((o, d, 4))
+            d = (x+1, y) 
+            edges.append((o, d, 4))
+            d = (x-1, y-1) 
+            edges.append((o, d, 5))
+            d = (x-1, y+1) 
+            edges.append((o, d, 5))
+            d = (x+1, y-1) 
+            edges.append((o, d, 5))
+            d = (x+1, y+1) 
+            edges.append((o, d, 5))            
+    for o, d, w in edges:
+        try:
+            g.add_edge(fs%o, fs%d, ElapseTime(w))
+        except VertexNotFoundError:
+            print o,d,w,'skipped'
     return g
 
 def remove_deadends(g) :
@@ -111,23 +102,23 @@ def apsp_cpu () :
     print modify
     return cost
 
-def apsp_gpu () :
+def apsp_gpu (v_low, block_size) :
     src = open('mingraph_kernels.cu').read()
     mod = SourceModule(src, options=["--ptxas-options=-v"])
     scatter = mod.get_function("scatter")
     vertex = gpuarray.to_gpu(va)
     edge   = gpuarray.to_gpu(ea)
     weight = gpuarray.to_gpu(wa)
-    cost   = np.empty((nv, n_tasks), dtype=np.int32)
+    cost   = np.empty((nv, block_size), dtype=np.int32)
     modify = np.zeros_like(cost)
-    cost.fill(999)
-    for i in range(n_tasks) :
-        cost[i, i] = 0
-        modify[i, i] = 1   
+    cost.fill(9999)
+    for i in range(block_size) :
+        cost  [v_low + i, i] = 0
+        modify[v_low + i, i] = 1   
     for i in range(nv): # need better break condition
-        #print cost.get()
-        #print modify.get()        
-        scatter(np.int32(nv), vertex, edge, weight, cuda.InOut(cost), cuda.InOut(modify), block=(nv,1,1), grid=(nv,1))
+        #be careful to get parameters right, otherwise mysterious segfaults ('kernel launch errors') will happen.        
+        # need v_low parameter
+        scatter(vertex, edge, weight, cuda.InOut(cost), cuda.InOut(modify), block=(block_size,1,1), grid=(nv,1))
         pycuda.autoinit.context.synchronize()    
     return cost
 
@@ -141,8 +132,24 @@ assist_graph_db = args[0]
 assistgraphdb = GraphDatabase( assist_graph_db )
 #ag = assistgraphdb.incarnate()
  
-#ag = synthetic(20, 20)
-ag = net(15, 20)
+ag = net(19, 19)
+
+ag.add_edge('0_9', '5_9', ElapseTime(5))
+ag.add_edge('5_9', '0_9', ElapseTime(5))
+ag.add_edge('5_9', '10_9', ElapseTime(5))
+ag.add_edge('10_9', '5_9', ElapseTime(5))
+ag.add_edge('10_9', '15_9', ElapseTime(5))
+ag.add_edge('15_9', '10_9', ElapseTime(5))
+ag.add_edge('15_9', '18_9', ElapseTime(5))
+ag.add_edge('18_9', '15_9', ElapseTime(5))
+
+ag.add_edge('9_5', '9_9', ElapseTime(3))
+ag.add_edge('9_9', '9_5', ElapseTime(3))
+ag.add_edge('9_9', '9_13', ElapseTime(3))
+ag.add_edge('9_13', '9_9', ElapseTime(3))
+ag.add_edge('9_13', '9_17', ElapseTime(3))
+ag.add_edge('9_17', '9_13', ElapseTime(3))
+
 remove_deadends(ag)
 
 v = list(ag.vertices)
@@ -178,24 +185,100 @@ print wa
 
 n_tasks = nv
 #cost = apsp_cpu()
+#print cost
 cost = apsp_gpu()
+print cost
 
 # embed
-DIM = 2
+DIM = 3
 coord  = np.random.rand(nv, DIM)
 force  = np.empty ((nv, DIM), dtype=np.float32)
 
-#for _ in range(20) :
-while (True) :
+from numpy import *
+import pylab as p
+#import matplotlib.axes3d as p3
+import mpl_toolkits.mplot3d.axes3d as p3
+def plot3 (coord, n_img):
+    fig=p.figure()
+    ax = p3.Axes3D(fig)
+    # scatter3D requires a 1D array for x, y, and z
+    ax.scatter3D(coord[:,0], coord[:,1], coord[:,2])
+    # wireframe or surface requires arrays that order the Z points (which are 3d)    
+    #ax.plot_wireframe(arange(coord.shape[0]), arange(coord.shape[1]), coord)
+    #ax.set_xlabel('D1')
+    #ax.set_ylabel('D2')
+    #ax.set_zlabel('D3')
+    p.savefig( 'img/embed%03d.png' % n_img )
+    p.close()
+
+def plot2 (coord, n_img):
+    fig=p.figure()
+    ax = fig.add_subplot(111)
+    # scatter3D requires a 1D array for x, y, and z
+    ax.scatter(coord[:,0], coord[:,1])
+    # wireframe or surface requires arrays that order the Z points (which are 3d)    
+    #ax.plot_wireframe(arange(coord.shape[0]), arange(coord.shape[1]), coord)
+    ax.set_xlabel('D1')
+    ax.set_ylabel('D2')
+    p.savefig( 'img/embed%03d.png' % n_img )
+    p.close()
+
+def plot3s (coord, n_img):
+    # wireframe or surface requires values to be in 2d arrays representing patches
+    X = np.empty((19, 19))
+    Y = np.empty_like(X)
+    Z = np.empty_like(X)
+    for label, index in vl.iteritems():
+        x, y = label.split('_')
+        X[x, y], Y[x, y], Z[x, y] = coord[index]
+    fig=p.figure()
+    ax = p3.Axes3D(fig)
+    # wireframe or surface requires arrays that order the Z points (which are 3d)    
+    ax.plot_surface(X, Y, Z)
+    p.savefig( 'img/embed%03d.png' % n_img )
+    p.close() # otherwise memory leak
+
+from enthought.mayavi import mlab
+X = np.zeros((19, 19))
+Y = np.zeros_like(X)
+Z = np.zeros_like(X)
+S = np.zeros_like(X)
+mesh = mlab.mesh(X, Y, Z, scalars=S)
+mesh_source = mesh.mlab_source
+
+def display_coords(coord) :
+    for label, index in vl.iteritems():
+        x, y = label.split('_')
+        if DIM > 3:
+            X[x, y], Y[x, y], Z[x, y], S[x, y] = coord[index, :4]
+            S[x, y] = err[index]
+        else:
+            X[x, y], Y[x, y], Z[x, y] = coord[index]
+            #S[x, y] = np.sum(vel[index])
+            #S[x, y] = sum(abs(force[index]))
+            S[x, y] = err[index]
+    mesh_source.set(x=X, y=Y, z=Z, scalars=S)
+    #outline.extent = mesh_source.extent
+    #mlab.view(focalpoint=coord[vl['10_10']])    
+
+err = np.zeros((nv,))
+
+def mds_iterate(coord, force, cost):
+    global err
     force.fill(0)
+    err.fill(0)
     for t in range(n_tasks) :
         vector = coord - coord[t]
+        # IF YOU USE AN L1 METRIC, OF COURSE YOUR RESULTS WILL LOOK STRANGE
         # L1 metric        
-        dist = np.sum(np.abs(vector), axis=1)
+        #dist = np.sum(np.abs(vector), axis=1)
         # L2 metric
-        #dist = np.sqrt(np.sum(vector * vector, axis=1))
+        dist = np.sqrt(np.sum(vector * vector, axis=1))
+        # L4 metric 
+        #dist = np.sqrt(np.sqrt(np.sum(vector * vector * vector * vector, axis=1)))
         adjust = (cost[t] / dist) - 1
         adjust[t] = 0 # avoid NaNs, could use nantonum
+        err += np.abs(adjust)
         #print 'task', t
         #print coord[t]
         #print coord
@@ -203,14 +286,37 @@ while (True) :
         #print dist
         #print cost[t]
         #print adjust
-        force += (vector * adjust[:, np.newaxis])
+        force += vector * adjust[:, np.newaxis]
+        #force += (vector * (adjust * (adjust > 0))[:, np.newaxis])
         #print force
+    #vel /= 2
     coord += force / n_tasks
-    stress = np.sum(np.sqrt(np.sum(force * force, axis=1))) / nv # actually this is kinetic energy, not stress.
-    print stress
-    if stress < 0.001 : break
+    err /= n_tasks
+    #coord += force / (n_tasks)
+    #stress = np.sum(np.sqrt(np.sum(force * force, axis=1))) / nv # actually this is kinetic energy, not stress.
+    # kinetic energy, peak to peak, mean, median, standard deviation
+    print np.sum(np.abs(force)), np.max(err), np.mean(err), np.std(err) 
+    #stress = np.sqrt(np.sum(adjust * adjust) / n_tasks)
+    #plot3s(coord, i)    
+    #i += 1
+    #if ke < 100 : mlab.show() # 1 percent RMS error
+
+@mlab.animate(delay=10)
+def mayavi_mds():
+    while(True):
+        mds_iterate(coord, force, cost)
+        display_coords(coord)
+        yield
+
+mayavi_mds()
+# redo axes since extent start out as all zeros
+#axes = mlab.axes(extent=(-100, 100, -100, 100, -100, 100))
+#outline = mlab.outline()
+mlab.show()
 
 for c in coord :
     for d in range(DIM) :
         print c[d],
     print
+
+

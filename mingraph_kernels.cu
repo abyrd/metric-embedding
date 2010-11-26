@@ -18,6 +18,7 @@ __global__ void scatter (int *vertex, int *edge, int *weight, int *cost, int *mo
     }
 }
 
+/*
 // accumulate forces proportional to embedding error
 // (each block should work on blockdim.x different origins, randomly)
 __global__ void force (float *coord, float *force, int *cost) {
@@ -26,7 +27,7 @@ __global__ void force (float *coord, float *force, int *cost) {
     float dist = 0;
     float vector[D];
     for (int d = 0; d < D; d++) {
-        vector[d] = (coord[tdindex + d] - ???);
+        vector[d] = (coord[tdindex + d] - something);
         dist += abs(vector[d]); // l1 norm
     }
     if (dist == 0) return; // avoid division by zero when points are superimposed
@@ -42,3 +43,4 @@ __global__ void integrate (float *coord, float *force) {
         force[i] = 0; // reset force to zero
     }
 }
+*/
