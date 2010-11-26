@@ -184,59 +184,13 @@ print ea
 print wa
 
 n_tasks = nv
-#cost = apsp_cpu()
-#print cost
-cost = apsp_gpu()
+cost = apsp_gpu(0, n_tasks)
 print cost
 
 # embed
 DIM = 3
 coord  = np.random.rand(nv, DIM)
 force  = np.empty ((nv, DIM), dtype=np.float32)
-
-from numpy import *
-import pylab as p
-#import matplotlib.axes3d as p3
-import mpl_toolkits.mplot3d.axes3d as p3
-def plot3 (coord, n_img):
-    fig=p.figure()
-    ax = p3.Axes3D(fig)
-    # scatter3D requires a 1D array for x, y, and z
-    ax.scatter3D(coord[:,0], coord[:,1], coord[:,2])
-    # wireframe or surface requires arrays that order the Z points (which are 3d)    
-    #ax.plot_wireframe(arange(coord.shape[0]), arange(coord.shape[1]), coord)
-    #ax.set_xlabel('D1')
-    #ax.set_ylabel('D2')
-    #ax.set_zlabel('D3')
-    p.savefig( 'img/embed%03d.png' % n_img )
-    p.close()
-
-def plot2 (coord, n_img):
-    fig=p.figure()
-    ax = fig.add_subplot(111)
-    # scatter3D requires a 1D array for x, y, and z
-    ax.scatter(coord[:,0], coord[:,1])
-    # wireframe or surface requires arrays that order the Z points (which are 3d)    
-    #ax.plot_wireframe(arange(coord.shape[0]), arange(coord.shape[1]), coord)
-    ax.set_xlabel('D1')
-    ax.set_ylabel('D2')
-    p.savefig( 'img/embed%03d.png' % n_img )
-    p.close()
-
-def plot3s (coord, n_img):
-    # wireframe or surface requires values to be in 2d arrays representing patches
-    X = np.empty((19, 19))
-    Y = np.empty_like(X)
-    Z = np.empty_like(X)
-    for label, index in vl.iteritems():
-        x, y = label.split('_')
-        X[x, y], Y[x, y], Z[x, y] = coord[index]
-    fig=p.figure()
-    ax = p3.Axes3D(fig)
-    # wireframe or surface requires arrays that order the Z points (which are 3d)    
-    ax.plot_surface(X, Y, Z)
-    p.savefig( 'img/embed%03d.png' % n_img )
-    p.close() # otherwise memory leak
 
 from enthought.mayavi import mlab
 X = np.zeros((19, 19))
