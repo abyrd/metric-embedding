@@ -67,19 +67,22 @@ def remove_deadends(g) :
                 g.remove_vertex(v.label)
                 n += 1
 
-def apsp_gpu (v_low, block_size) :
+def apsp_gpu (block_size) :
     cost   = np.empty((block_size, nv), dtype=np.int32)
     modify = np.zeros_like(cost)
     cost.fill(9999)
+    # maybe add random numbers to a hashmap until it is the right size, guaranteeing uniqueness
+    origins = range(nv)
+    random.shuffle(origins)
+    origins = origins[:block_size]
     for i in range(block_size) :
-        cost  [i, v_low + i] = 0
-        modify[i, v_low + i] = 1   
-    #for i in range(nv): # need better break condition
+        cost  [i, origins[i]] = 0
+        modify[i, origins[i]] = 1   
     while modify.any() :
         #be careful to get parameters right, otherwise mysterious segfaults ('kernel launch errors') or worse will happen.        
         scatter(np.int32(nv), vertex, edge, weight, cuda.InOut(cost), cuda.InOut(modify), block=(block_size,1,1), grid=(nv,1))
         pycuda.autoinit.context.synchronize()    
-    return cost
+    return origins, cost
 
 usage = """usage: python zzzz.py <assist_graph_database>"""
 parser = OptionParser(usage=usage)
@@ -174,23 +177,21 @@ def display_coords(coord) :
     mesh_source.set(x=X, y=Y, z=Z, scalars=S)
 
 def mds_iterate():
-    BLOCK_SIZE = 128
+    BLOCK_SIZE = 64
     global coord, force, cost, error
     force.fill(0)
     error.fill(0)
-    for v_low in range(0, nv, BLOCK_SIZE) :
-        block_size = min(BLOCK_SIZE, nv - v_low - 1) # choose full or partial block. account for zero-based indexing!
-        cost = apsp_gpu(v_low, block_size)
-        for i in range(block_size) :
-            vector = coord - coord[v_low + i]
-            # l2 metric
-            dist = np.sqrt(np.sum(vector * vector, axis=1))
-            adjust = (cost[i] / dist) - 1
-            adjust[v_low + i] = 0 # avoid NaNs, could use nantonum
-            error += abs(adjust)
-            force += vector * adjust[:, np.newaxis]
-    coord += force / nv
-    error /= nv
+    origins, cost = apsp_gpu(BLOCK_SIZE)
+    for i in range(BLOCK_SIZE) :
+        vector = coord - coord[origins[i]]
+        # l2 metric
+        dist = np.sqrt(np.sum(vector * vector, axis=1))
+        adjust = (cost[i] / dist) - 1
+        adjust[origins[i]] = 0 # avoid NaNs, could use nantonum
+        error += abs(adjust)
+        force += vector * adjust[:, np.newaxis]
+    coord += force / BLOCK_SIZE
+    error /= BLOCK_SIZE
     # kinetic energy and peak, mean, median, standard deviation of errors
     print np.sum(np.abs(force)), np.max(error), np.mean(error), np.std(error) 
 
