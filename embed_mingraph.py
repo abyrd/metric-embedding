@@ -93,17 +93,17 @@ if len(args) != 1:
 assist_graph_db = args[0]
 assistgraphdb = GraphDatabase( assist_graph_db )
 #ag = assistgraphdb.incarnate()
- 
+
 ag = net(19, 19)
 
-ag.add_edge('0_9', '5_9', ElapseTime(5))
-ag.add_edge('5_9', '0_9', ElapseTime(5))
-ag.add_edge('5_9', '10_9', ElapseTime(5))
-ag.add_edge('10_9', '5_9', ElapseTime(5))
-ag.add_edge('10_9', '15_9', ElapseTime(5))
-ag.add_edge('15_9', '10_9', ElapseTime(5))
-ag.add_edge('15_9', '18_9', ElapseTime(5))
-ag.add_edge('18_9', '15_9', ElapseTime(5))
+#ag.add_edge('0_9', '5_9', ElapseTime(5))
+#ag.add_edge('5_9', '0_9', ElapseTime(5))
+#ag.add_edge('5_9', '10_9', ElapseTime(5))
+#ag.add_edge('10_9', '5_9', ElapseTime(5))
+#ag.add_edge('10_9', '15_9', ElapseTime(5))
+#ag.add_edge('15_9', '10_9', ElapseTime(5))
+#ag.add_edge('15_9', '18_9', ElapseTime(5))
+#ag.add_edge('18_9', '15_9', ElapseTime(5))
 
 #ag.add_edge('9_5', '9_9', ElapseTime(3))
 #ag.add_edge('9_9', '9_5', ElapseTime(3))
@@ -169,6 +169,8 @@ vertex = gpuarray.to_gpu(va)
 edge   = gpuarray.to_gpu(ea)
 weight = gpuarray.to_gpu(wa)
 
+#nv = 30000
+
 def display_coords(coord) :
     for label, index in vl.iteritems():
         x, y = label.split('_')
@@ -177,7 +179,7 @@ def display_coords(coord) :
     mesh_source.set(x=X, y=Y, z=Z, scalars=S)
 
 def mds_iterate():
-    BLOCK_SIZE = 64
+    BLOCK_SIZE = 512
     global coord, force, cost, error
     force.fill(0)
     error.fill(0)
@@ -195,10 +197,40 @@ def mds_iterate():
     # kinetic energy and peak, mean, median, standard deviation of errors
     print np.sum(np.abs(force)), np.max(error), np.mean(error), np.std(error) 
 
+def mds_iterate_new():
+    global coord, force, error
+    force.fill(0)
+    error.fill(0)
+    for oi in range (nv) : # for each vertex
+        vect = coord - coord[oi] # vector to every point from this origin
+        dist = np.sqrt(np.sum(vect * vect, axis=1)) # l2 norm
+        for ei in range(va[oi], va[oi + 1]) : # iterate through outgoing edges
+            di = ea[ei]
+            w  = wa[ei]
+            print vect
+            print coord
+            print coord[di]
+            print vect - coord
+            evect = vect - coord# + coord[di]
+            print 'vect/evect:', vect, evect
+            edist = np.sqrt(np.sum(evect * evect, axis=1))
+            print 'edist:', edist
+            print w/edist
+            sys.exit(0)
+            adjust = w / edist - 1 # need to filter inf not nan
+            adjust[adjust == np.inf] = 0
+            print adjust
+            force += evect * adjust[:, np.newaxis]
+            error += np.abs(adjust)
+    coord += force / ne 
+    error /= ne
+    # kinetic energy and peak, mean, median, standard deviation of errors
+    print np.sum(np.abs(force)), np.max(error), np.mean(error), np.std(error) 
+
 @mlab.animate(delay=10)
 def mayavi_mds():
     while(True):
-        mds_iterate()
+        mds_iterate_new()
         display_coords(coord)
         yield
 
